@@ -28,6 +28,11 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier.padding(innerPadding),
                             onAuthenticated = { authResponse = it },
                         )
+                    } else if (authResponse?.user?.role == "professor") {
+                        ProfessorHomeScreen(
+                            authResponse = requireNotNull(authResponse),
+                            modifier = Modifier.padding(innerPadding),
+                        )
                     } else {
                         AgeRunHomeScreen(modifier = Modifier.padding(innerPadding))
                     }

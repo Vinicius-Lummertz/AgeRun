@@ -25,6 +25,15 @@ data class AuthResponse(
     val session: AuthSession? = null,
 )
 
+data class Escala(
+    val id: String,
+    val titulo: String,
+    val descricao: String?,
+    val local: String?,
+    val inicioAt: String,
+    val fimAt: String?,
+)
+
 object AuthApi {
     private const val BASE_URL = "http://10.0.2.2:3000"
 
@@ -47,30 +56,86 @@ object AuthApi {
         )
     }
 
+    suspend fun criarEscala(
+        accessToken: String,
+        titulo: String,
+        descricao: String,
+        local: String,
+        inicioAt: String,
+        fimAt: String,
+    ): Result<Escala> = withContext(Dispatchers.IO) {
+        runCatching {
+            val json = requestJson(
+                path = "/escalas",
+                method = "POST",
+                body = JSONObject()
+                    .put("titulo", titulo)
+                    .put("descricao", descricao)
+                    .put("local", local)
+                    .put("inicio_at", inicioAt)
+                    .put("fim_at", fimAt),
+                accessToken = accessToken,
+            )
+
+            json.getJSONObject("escala").toEscala()
+        }
+    }
+
+    suspend fun listarEscalas(accessToken: String): Result<List<Escala>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val json = requestJson(
+                path = "/escalas",
+                method = "GET",
+                accessToken = accessToken,
+            )
+            val escalasJson = json.getJSONArray("escalas")
+
+            buildList {
+                for (index in 0 until escalasJson.length()) {
+                    add(escalasJson.getJSONObject(index).toEscala())
+                }
+            }
+        }
+    }
+
     private suspend fun post(path: String, body: JSONObject): Result<AuthResponse> = withContext(Dispatchers.IO) {
         runCatching {
-            val connection = (URL("$BASE_URL$path").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 10_000
-                readTimeout = 10_000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty("Accept", "application/json")
-            }
+            requestJson(path = path, method = "POST", body = body).toAuthResponse()
+        }
+    }
 
+    private fun requestJson(
+        path: String,
+        method: String,
+        body: JSONObject? = null,
+        accessToken: String? = null,
+    ): JSONObject {
+        val connection = (URL("$BASE_URL$path").openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = 10_000
+            readTimeout = 10_000
+            doOutput = body != null
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Content-Type", "application/json")
+            if (!accessToken.isNullOrBlank()) {
+                setRequestProperty("Authorization", "Bearer $accessToken")
+            }
+        }
+
+        if (body != null) {
             OutputStreamWriter(connection.outputStream).use { writer ->
                 writer.write(body.toString())
             }
-
-            val responseText = readResponse(connection)
-            val json = if (responseText.isBlank()) JSONObject() else JSONObject(responseText)
-
-            if (connection.responseCode !in 200..299) {
-                throw IllegalStateException(json.optString("error", "Nao foi possivel completar a operacao."))
-            }
-
-            json.toAuthResponse()
         }
+
+        val responseText = readResponse(connection)
+        val json = if (responseText.isBlank()) JSONObject() else JSONObject(responseText)
+
+        if (connection.responseCode !in 200..299) {
+            throw IllegalStateException(json.optString("error", "Nao foi possivel completar a operacao."))
+        }
+
+        return json
     }
 
     private fun readResponse(connection: HttpURLConnection): String {
@@ -102,6 +167,17 @@ object AuthApi {
                     refreshToken = it.optString("refresh_token"),
                 )
             },
+        )
+    }
+
+    private fun JSONObject.toEscala(): Escala {
+        return Escala(
+            id = getString("id"),
+            titulo = getString("titulo"),
+            descricao = optString("descricao").takeUnless { it == "null" || it.isBlank() },
+            local = optString("local").takeUnless { it == "null" || it.isBlank() },
+            inicioAt = getString("inicio_at"),
+            fimAt = optString("fim_at").takeUnless { it == "null" || it.isBlank() },
         )
     }
 }

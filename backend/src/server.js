@@ -6,6 +6,7 @@ require("dotenv").config({ path: path.resolve(__dirname, ".env"), quiet: true })
 const cors = require("cors");
 const express = require("express");
 const cadastroRouter = require("./routes/cadastro");
+const escalasRouter = require("./routes/escalas");
 const loginRouter = require("./routes/login");
 
 const app = express();
@@ -20,6 +21,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/cadastro", cadastroRouter);
 app.use("/login", loginRouter);
+app.use("/escalas", escalasRouter);
 
 app.use((req, res) => {
   res.status(404).json({ error: `Rota ${req.method} ${req.path} não encontrada.` });
