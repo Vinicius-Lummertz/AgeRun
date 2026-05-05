@@ -45,6 +45,7 @@ create table if not exists public.recados (
   titulo text not null check (char_length(trim(titulo)) >= 3),
   mensagem text not null check (char_length(trim(mensagem)) >= 3),
   prioridade text not null default 'normal' check (prioridade in ('normal', 'importante', 'urgente')),
+  fixado boolean not null default false,
   ativo boolean not null default true,
   created_by uuid not null references public.profiles(id),
   created_at timestamptz not null default now(),
@@ -277,11 +278,15 @@ create table if not exists public.recados (
   titulo text not null check (char_length(trim(titulo)) >= 3),
   mensagem text not null check (char_length(trim(mensagem)) >= 3),
   prioridade text not null default 'normal' check (prioridade in ('normal', 'importante', 'urgente')),
+  fixado boolean not null default false,
   ativo boolean not null default true,
   created_by uuid not null references public.profiles(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.recados
+  add column if not exists fixado boolean not null default false;
 
 drop trigger if exists recados_touch_updated_at on public.recados;
 create trigger recados_touch_updated_at

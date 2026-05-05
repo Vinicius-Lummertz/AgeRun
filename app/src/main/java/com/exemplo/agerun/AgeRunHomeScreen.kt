@@ -20,8 +20,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -64,7 +66,12 @@ private sealed interface LocationUiState {
 }
 
 @Composable
-fun AgeRunHomeScreen(modifier: Modifier = Modifier) {
+fun AgeRunHomeScreen(
+    modifier: Modifier = Modifier,
+    authResponse: AuthResponse? = null,
+    onOpenEscalas: () -> Unit = {},
+    onOpenRecados: () -> Unit = {},
+) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var uiState by remember { mutableStateOf<LocationUiState>(LocationUiState.Idle) }
@@ -114,27 +121,46 @@ fun AgeRunHomeScreen(modifier: Modifier = Modifier) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(24.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
+            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Column {
                 Text(
-                    text = "AgeRun",
+                    text = authResponse?.user?.nome?.let { "Oi, $it" } ?: "AgeRun",
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.Black,
                     color = Color(0xFF10221C),
                 )
                 Text(
-                    text = "Sua primeira passada com GPS.",
+                    text = "Acompanhe treinos, recados e sua posicao.",
                     style = MaterialTheme.typography.titleMedium,
                     color = Color(0xFF587069),
                 )
 
-                Spacer(modifier = Modifier.height(28.dp))
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    StudentActionCard(
+                        modifier = Modifier.weight(1f),
+                        title = "Escalas",
+                        subtitle = "Proximos treinos",
+                        onClick = onOpenEscalas,
+                    )
+                    StudentActionCard(
+                        modifier = Modifier.weight(1f),
+                        title = "Recados",
+                        subtitle = "Avisos da turma",
+                        onClick = onOpenRecados,
+                    )
+                }
 
                 MiniMapPreview()
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(2.dp))
 
                 LocationCard(uiState = uiState)
             }
@@ -163,6 +189,29 @@ fun AgeRunHomeScreen(modifier: Modifier = Modifier) {
                     fontWeight = FontWeight.Bold,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun StudentActionCard(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        onClick = onClick,
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(text = title, color = Color(0xFF10221C), fontWeight = FontWeight.Black)
+            Text(text = subtitle, color = Color(0xFF587069), style = MaterialTheme.typography.bodySmall)
         }
     }
 }

@@ -39,6 +39,7 @@ data class Recado(
     val titulo: String,
     val mensagem: String,
     val prioridade: String,
+    val fixado: Boolean,
     val ativo: Boolean,
     val createdAt: String,
 )
@@ -129,6 +130,7 @@ object AuthApi {
         titulo: String,
         mensagem: String,
         prioridade: String,
+        fixado: Boolean,
     ): Result<Recado> = withContext(Dispatchers.IO) {
         runCatching {
             val json = requestJson(
@@ -137,7 +139,23 @@ object AuthApi {
                 body = JSONObject()
                     .put("titulo", titulo)
                     .put("mensagem", mensagem)
-                    .put("prioridade", prioridade),
+                    .put("prioridade", prioridade)
+                    .put("fixado", fixado),
+                accessToken = accessToken,
+            )
+
+            json.getJSONObject("recado").toRecado()
+        }
+    }
+
+    suspend fun arquivarRecado(
+        accessToken: String,
+        recadoId: String,
+    ): Result<Recado> = withContext(Dispatchers.IO) {
+        runCatching {
+            val json = requestJson(
+                path = "/recados/$recadoId",
+                method = "DELETE",
                 accessToken = accessToken,
             )
 
@@ -234,6 +252,7 @@ object AuthApi {
             titulo = getString("titulo"),
             mensagem = getString("mensagem"),
             prioridade = getString("prioridade"),
+            fixado = optBoolean("fixado", false),
             ativo = optBoolean("ativo", true),
             createdAt = getString("created_at"),
         )

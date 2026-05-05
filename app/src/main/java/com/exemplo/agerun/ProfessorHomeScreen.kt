@@ -80,11 +80,11 @@ private data class PlaceSuggestion(
 fun ProfessorHomeScreen(
     authResponse: AuthResponse,
     modifier: Modifier = Modifier,
+    onOpenEscalas: () -> Unit = {},
     onOpenRecados: () -> Unit = {},
 ) {
     val accessToken = authResponse.session?.accessToken.orEmpty()
     val coroutineScope = rememberCoroutineScope()
-    var showCreateDialog by remember { mutableStateOf(false) }
     var escalas by remember { mutableStateOf<List<Escala>>(emptyList()) }
     var isLoadingEscalas by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf<String?>(null) }
@@ -150,7 +150,7 @@ fun ProfessorHomeScreen(
                 ProfessorActionCard(
                     title = "Criar escala",
                     subtitle = "Agende treino, local e horario.",
-                    onClick = { showCreateDialog = true },
+                    onClick = onOpenEscalas,
                 )
                 ProfessorActionCard(
                     title = "Enviar recado",
@@ -199,16 +199,6 @@ fun ProfessorHomeScreen(
         }
     }
 
-    if (showCreateDialog) {
-        CreateEscalaDialog(
-            accessToken = accessToken,
-            onDismiss = { showCreateDialog = false },
-            onCreated = {
-                showCreateDialog = false
-                loadEscalas()
-            },
-        )
-    }
 }
 
 @Composable
@@ -326,7 +316,7 @@ private fun EscalaListCard(escala: Escala) {
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(text = escala.titulo, color = ProfessorInk, fontWeight = FontWeight.Bold)
-            Text(text = escala.inicioAt, color = ProfessorMuted, style = MaterialTheme.typography.bodyMedium)
+            Text(text = formatDateTime(escala.inicioAt), color = ProfessorMuted, style = MaterialTheme.typography.bodyMedium)
             escala.local?.let {
                 Text(text = it, color = ProfessorMuted, style = MaterialTheme.typography.bodyMedium)
             }
@@ -335,7 +325,7 @@ private fun EscalaListCard(escala: Escala) {
 }
 
 @Composable
-private fun CreateEscalaDialog(
+fun CreateEscalaDialog(
     accessToken: String,
     onDismiss: () -> Unit,
     onCreated: () -> Unit,
@@ -634,7 +624,7 @@ private fun showDateTimePicker(
 
                     val isoValue = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US)
                         .format(calendar.time)
-                    val displayValue = SimpleDateFormat("dd/MM/yyyy 'as' HH:mm", Locale("pt", "BR"))
+                    val displayValue = SimpleDateFormat("dd/MM/yyyy 'as' HH:mm", Locale.forLanguageTag("pt-BR"))
                         .format(calendar.time)
 
                     onSelected(isoValue, displayValue)

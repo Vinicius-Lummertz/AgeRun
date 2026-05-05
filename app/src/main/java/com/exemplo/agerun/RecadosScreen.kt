@@ -150,7 +150,17 @@ fun RecadosScreen(
                 EmptyRecadosCard(isProfessor = isProfessor)
             } else {
                 recados.forEach { recado ->
-                    RecadoCard(recado = recado)
+                    RecadoCard(
+                        recado = recado,
+                        isProfessor = isProfessor,
+                        onArchive = {
+                            coroutineScope.launch {
+                                AuthApi.arquivarRecado(accessToken, recado.id)
+                                    .onSuccess { loadRecados() }
+                                    .onFailure { feedback = it.message ?: "Nao foi possivel arquivar o recado." }
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -185,7 +195,11 @@ private fun EmptyRecadosCard(isProfessor: Boolean) {
 }
 
 @Composable
-private fun RecadoCard(recado: Recado) {
+private fun RecadoCard(
+    recado: Recado,
+    isProfessor: Boolean,
+    onArchive: () -> Unit,
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -211,10 +225,23 @@ private fun RecadoCard(recado: Recado) {
             }
             Text(text = recado.mensagem, color = RecadosInk)
             Text(
-                text = recado.createdAt,
+                text = formatDateTime(recado.createdAt),
                 color = RecadosMuted,
                 style = MaterialTheme.typography.bodySmall,
             )
+            if (recado.fixado) {
+                Text(
+                    text = "Fixado no topo",
+                    color = RecadosGreen,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (isProfessor && recado.ativo) {
+                TextButton(onClick = onArchive) {
+                    Text(text = "Arquivar", color = RecadosGreen, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }
@@ -251,6 +278,7 @@ private fun CreateRecadoDialog(
     var titulo by remember { mutableStateOf("") }
     var mensagem by remember { mutableStateOf("") }
     var prioridade by remember { mutableStateOf("normal") }
+    var fixado by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -286,6 +314,22 @@ private fun CreateRecadoDialog(
                     selected = prioridade,
                     onSelected = { prioridade = it },
                 )
+                Button(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    onClick = { fixado = !fixado },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = if (fixado) RecadosGreen else Color(0xFFE8EFEA),
+                        contentColor = if (fixado) Color.White else RecadosInk,
+                    ),
+                ) {
+                    Text(
+                        text = if (fixado) "Fixado no topo" else "Fixar no topo",
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
 
                 error?.let {
                     Text(text = it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
@@ -305,6 +349,7 @@ private fun CreateRecadoDialog(
                             titulo = titulo,
                             mensagem = mensagem,
                             prioridade = prioridade,
+                            fixado = fixado,
                         )
                             .onSuccess { onCreated() }
                             .onFailure { error = it.message ?: "Nao foi possivel criar o recado." }
@@ -353,7 +398,7 @@ private fun PrioritySelector(
                         contentColor = if (isSelected) Color.White else RecadosInk,
                     ),
                 ) {
-                    Text(text = option, fontWeight = FontWeight.Bold)
+                    Text(text = option, fontWeight = FontWeight.Bold, maxLines = 1)
                 }
             }
         }

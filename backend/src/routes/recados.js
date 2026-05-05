@@ -8,6 +8,7 @@ function validateRecado(body, partial = false) {
   const titulo = body.titulo === undefined ? undefined : String(body.titulo || "").trim();
   const mensagem = body.mensagem === undefined ? undefined : String(body.mensagem || "").trim();
   const prioridade = body.prioridade === undefined ? undefined : String(body.prioridade || "normal").trim();
+  const fixado = body.fixado === undefined ? undefined : Boolean(body.fixado);
   const ativo = body.ativo === undefined ? undefined : Boolean(body.ativo);
 
   if (!partial || titulo !== undefined) {
@@ -31,18 +32,21 @@ function validateRecado(body, partial = false) {
   if (titulo !== undefined) data.titulo = titulo;
   if (mensagem !== undefined) data.mensagem = mensagem;
   if (prioridade !== undefined) data.prioridade = prioridade;
+  if (fixado !== undefined) data.fixado = fixado;
   if (ativo !== undefined) data.ativo = ativo;
 
   return { ok: true, data };
 }
 
 router.get("/", requireAuth, async (req, res) => {
+  const includeInactive = req.auth.profile.role === "professor" && req.query.includeInactive === "true";
   let query = supabase
     .from("recados")
-    .select("id, titulo, mensagem, prioridade, ativo, created_by, created_at, updated_at")
+    .select("id, titulo, mensagem, prioridade, fixado, ativo, created_by, created_at, updated_at")
+    .order("fixado", { ascending: false })
     .order("created_at", { ascending: false });
 
-  if (req.auth.profile.role !== "professor") {
+  if (!includeInactive) {
     query = query.eq("ativo", true);
   }
 
@@ -68,7 +72,7 @@ router.post("/", requireAuth, requireProfessor, async (req, res) => {
       ...validation.data,
       created_by: req.auth.profile.id,
     })
-    .select("id, titulo, mensagem, prioridade, ativo, created_by, created_at, updated_at")
+    .select("id, titulo, mensagem, prioridade, fixado, ativo, created_by, created_at, updated_at")
     .single();
 
   if (error) {
@@ -96,7 +100,7 @@ router.patch("/:id", requireAuth, requireProfessor, async (req, res) => {
     .from("recados")
     .update(validation.data)
     .eq("id", req.params.id)
-    .select("id, titulo, mensagem, prioridade, ativo, created_by, created_at, updated_at")
+    .select("id, titulo, mensagem, prioridade, fixado, ativo, created_by, created_at, updated_at")
     .single();
 
   if (error) {
@@ -114,7 +118,7 @@ router.delete("/:id", requireAuth, requireProfessor, async (req, res) => {
     .from("recados")
     .update({ ativo: false })
     .eq("id", req.params.id)
-    .select("id, titulo, mensagem, prioridade, ativo, created_by, created_at, updated_at")
+    .select("id, titulo, mensagem, prioridade, fixado, ativo, created_by, created_at, updated_at")
     .single();
 
   if (error) {
