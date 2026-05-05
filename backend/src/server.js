@@ -8,6 +8,7 @@ const express = require("express");
 const cadastroRouter = require("./routes/cadastro");
 const escalasRouter = require("./routes/escalas");
 const loginRouter = require("./routes/login");
+const recadosRouter = require("./routes/recados");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -22,6 +23,7 @@ app.get("/health", (_req, res) => {
 app.use("/cadastro", cadastroRouter);
 app.use("/login", loginRouter);
 app.use("/escalas", escalasRouter);
+app.use("/recados", recadosRouter);
 
 app.use((req, res) => {
   res.status(404).json({ error: `Rota ${req.method} ${req.path} não encontrada.` });

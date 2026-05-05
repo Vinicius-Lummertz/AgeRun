@@ -40,6 +40,17 @@ create table if not exists public.escala_participantes (
   primary key (escala_id, aluno_id)
 );
 
+create table if not exists public.recados (
+  id uuid primary key default gen_random_uuid(),
+  titulo text not null check (char_length(trim(titulo)) >= 3),
+  mensagem text not null check (char_length(trim(mensagem)) >= 3),
+  prioridade text not null default 'normal' check (prioridade in ('normal', 'importante', 'urgente')),
+  ativo boolean not null default true,
+  created_by uuid not null references public.profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 -- Compatibilidade caso voce tenha rodado a versao antiga com role = 'deus'.
 update public.profiles
    set role = 'professor'
@@ -69,6 +80,11 @@ for each row execute function public.touch_updated_at();
 drop trigger if exists escalas_touch_updated_at on public.escalas;
 create trigger escalas_touch_updated_at
 before update on public.escalas
+for each row execute function public.touch_updated_at();
+
+drop trigger if exists recados_touch_updated_at on public.recados;
+create trigger recados_touch_updated_at
+before update on public.recados
 for each row execute function public.touch_updated_at();
 
 create or replace function public.current_user_role()
@@ -129,6 +145,7 @@ drop function if exists public.promote_profile(uuid, text);
 alter table public.profiles enable row level security;
 alter table public.escalas enable row level security;
 alter table public.escala_participantes enable row level security;
+alter table public.recados enable row level security;
 
 drop policy if exists "profiles_select_own_or_staff" on public.profiles;
 drop policy if exists "profiles_select_own_or_professor" on public.profiles;
@@ -210,17 +227,96 @@ on public.escala_participantes for delete
 to authenticated
 using (public.is_professor());
 
+drop policy if exists "recados_select_active_or_professor" on public.recados;
+create policy "recados_select_active_or_professor"
+on public.recados for select
+to authenticated
+using (ativo = true or public.is_professor());
+
+drop policy if exists "recados_insert_professor" on public.recados;
+create policy "recados_insert_professor"
+on public.recados for insert
+to authenticated
+with check (public.is_professor() and created_by = auth.uid());
+
+drop policy if exists "recados_update_professor" on public.recados;
+create policy "recados_update_professor"
+on public.recados for update
+to authenticated
+using (public.is_professor())
+with check (public.is_professor());
+
+drop policy if exists "recados_delete_professor" on public.recados;
+create policy "recados_delete_professor"
+on public.recados for delete
+to authenticated
+using (public.is_professor());
+
 revoke all on public.profiles from anon, authenticated;
 revoke all on public.escalas from anon, authenticated;
 revoke all on public.escala_participantes from anon, authenticated;
+revoke all on public.recados from anon, authenticated;
 
 grant select, insert on public.profiles to authenticated;
 grant update (nome) on public.profiles to authenticated;
 grant select, insert, update, delete on public.escalas to authenticated;
 grant select, insert, update, delete on public.escala_participantes to authenticated;
+grant select, insert, update, delete on public.recados to authenticated;
 grant execute on function public.set_profile_role(uuid, text) to authenticated;
 grant execute on function public.current_user_role() to authenticated;
 grant execute on function public.is_professor() to authenticated;
+```
+
+## Migracao: recados
+
+Se voce ja executou o script anterior no Supabase, rode apenas este bloco para adicionar a feature de recados:
+
+```sql
+create table if not exists public.recados (
+  id uuid primary key default gen_random_uuid(),
+  titulo text not null check (char_length(trim(titulo)) >= 3),
+  mensagem text not null check (char_length(trim(mensagem)) >= 3),
+  prioridade text not null default 'normal' check (prioridade in ('normal', 'importante', 'urgente')),
+  ativo boolean not null default true,
+  created_by uuid not null references public.profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+drop trigger if exists recados_touch_updated_at on public.recados;
+create trigger recados_touch_updated_at
+before update on public.recados
+for each row execute function public.touch_updated_at();
+
+alter table public.recados enable row level security;
+
+drop policy if exists "recados_select_active_or_professor" on public.recados;
+create policy "recados_select_active_or_professor"
+on public.recados for select
+to authenticated
+using (ativo = true or public.is_professor());
+
+drop policy if exists "recados_insert_professor" on public.recados;
+create policy "recados_insert_professor"
+on public.recados for insert
+to authenticated
+with check (public.is_professor() and created_by = auth.uid());
+
+drop policy if exists "recados_update_professor" on public.recados;
+create policy "recados_update_professor"
+on public.recados for update
+to authenticated
+using (public.is_professor())
+with check (public.is_professor());
+
+drop policy if exists "recados_delete_professor" on public.recados;
+create policy "recados_delete_professor"
+on public.recados for delete
+to authenticated
+using (public.is_professor());
+
+revoke all on public.recados from anon, authenticated;
+grant select, insert, update, delete on public.recados to authenticated;
 ```
 
 ## Criando o primeiro professor

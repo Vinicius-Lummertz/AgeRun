@@ -34,6 +34,15 @@ data class Escala(
     val fimAt: String?,
 )
 
+data class Recado(
+    val id: String,
+    val titulo: String,
+    val mensagem: String,
+    val prioridade: String,
+    val ativo: Boolean,
+    val createdAt: String,
+)
+
 object AuthApi {
     private const val BASE_URL = "http://10.0.2.2:3000"
 
@@ -95,6 +104,44 @@ object AuthApi {
                     add(escalasJson.getJSONObject(index).toEscala())
                 }
             }
+        }
+    }
+
+    suspend fun listarRecados(accessToken: String): Result<List<Recado>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val json = requestJson(
+                path = "/recados",
+                method = "GET",
+                accessToken = accessToken,
+            )
+            val recadosJson = json.getJSONArray("recados")
+
+            buildList {
+                for (index in 0 until recadosJson.length()) {
+                    add(recadosJson.getJSONObject(index).toRecado())
+                }
+            }
+        }
+    }
+
+    suspend fun criarRecado(
+        accessToken: String,
+        titulo: String,
+        mensagem: String,
+        prioridade: String,
+    ): Result<Recado> = withContext(Dispatchers.IO) {
+        runCatching {
+            val json = requestJson(
+                path = "/recados",
+                method = "POST",
+                body = JSONObject()
+                    .put("titulo", titulo)
+                    .put("mensagem", mensagem)
+                    .put("prioridade", prioridade),
+                accessToken = accessToken,
+            )
+
+            json.getJSONObject("recado").toRecado()
         }
     }
 
@@ -178,6 +225,17 @@ object AuthApi {
             local = optString("local").takeUnless { it == "null" || it.isBlank() },
             inicioAt = getString("inicio_at"),
             fimAt = optString("fim_at").takeUnless { it == "null" || it.isBlank() },
+        )
+    }
+
+    private fun JSONObject.toRecado(): Recado {
+        return Recado(
+            id = getString("id"),
+            titulo = getString("titulo"),
+            mensagem = getString("mensagem"),
+            prioridade = getString("prioridade"),
+            ativo = optBoolean("ativo", true),
+            createdAt = getString("created_at"),
         )
     }
 }

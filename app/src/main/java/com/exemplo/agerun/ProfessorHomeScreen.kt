@@ -80,6 +80,7 @@ private data class PlaceSuggestion(
 fun ProfessorHomeScreen(
     authResponse: AuthResponse,
     modifier: Modifier = Modifier,
+    onOpenRecados: () -> Unit = {},
 ) {
     val accessToken = authResponse.session?.accessToken.orEmpty()
     val coroutineScope = rememberCoroutineScope()
@@ -153,9 +154,8 @@ fun ProfessorHomeScreen(
                 )
                 ProfessorActionCard(
                     title = "Enviar recado",
-                    subtitle = "Em breve: aviso rapido para alunos.",
-                    enabled = false,
-                    onClick = {},
+                    subtitle = "Publique um aviso rapido para alunos.",
+                    onClick = onOpenRecados,
                 )
             }
 
