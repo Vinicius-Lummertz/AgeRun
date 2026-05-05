@@ -1,6 +1,7 @@
 package com.exemplo.agerun
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -8,9 +9,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -28,6 +31,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -37,12 +42,12 @@ import androidx.compose.ui.unit.dp
 import com.exemplo.agerun.ui.theme.AgeRunTheme
 import kotlinx.coroutines.launch
 
-private val AuthBackground = Color(0xFFF6F7F2)
-private val AuthInk = Color(0xFF10221C)
-private val AuthMuted = Color(0xFF587069)
-private val AuthGreen = Color(0xFF0B6B3A)
-private val AuthFieldBorder = Color(0xFFB8C7BF)
-private val AuthFieldFill = Color(0xFFFBFCF8)
+private val AuthBackground = Color(0xFF08001F)
+private val AuthInk = Color(0xFFF8F4FF)
+private val AuthMuted = Color(0xFFAAA1C7)
+private val AuthGreen = Color(0xFFA7E22E)
+private val AuthFieldBorder = Color(0xFF4C397C)
+private val AuthFieldFill = Color(0xFF15004C)
 
 private enum class AuthMode {
     Login,
@@ -104,12 +109,20 @@ fun AuthScreen(
                 .padding(24.dp),
             verticalArrangement = Arrangement.Center,
         ) {
-            Text(
-                text = "AgeRun",
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Black,
-                color = AuthInk,
-            )
+            Surface(
+                color = Color.White,
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Image(
+                    modifier = Modifier
+                        .width(132.dp)
+                        .height(48.dp)
+                        .padding(8.dp),
+                    painter = painterResource(id = R.drawable.logo),
+                    contentDescription = "AgeRun",
+                    contentScale = ContentScale.Fit,
+                )
+            }
             Text(
                 text = if (mode == AuthMode.Login) "Entre para ver suas escalas." else "Crie sua conta de aluno.",
                 style = MaterialTheme.typography.titleMedium,
@@ -121,7 +134,7 @@ fun AuthScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(8.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
+                colors = CardDefaults.cardColors(containerColor = AuthFieldFill),
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
@@ -182,13 +195,17 @@ fun AuthScreen(
                         shape = RoundedCornerShape(8.dp),
                         enabled = !isLoading,
                         onClick = { submit() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = AuthGreen,
+                            contentColor = AuthBackground,
+                        ),
                     ) {
                         if (isLoading) {
                             CircularProgressIndicator(
                                 modifier = Modifier
                                     .height(22.dp)
                                     .background(Color.Transparent),
-                                color = Color.White,
+                                color = AuthBackground,
                                 strokeWidth = 2.dp,
                             )
                         } else {

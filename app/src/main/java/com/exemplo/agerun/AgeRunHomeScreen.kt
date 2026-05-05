@@ -10,6 +10,7 @@ import android.os.CancellationSignal
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -71,6 +72,7 @@ fun AgeRunHomeScreen(
     authResponse: AuthResponse? = null,
     onOpenEscalas: () -> Unit = {},
     onOpenRecados: () -> Unit = {},
+    onLogout: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -136,6 +138,14 @@ fun AgeRunHomeScreen(
                     text = "Acompanhe treinos, recados e sua posicao.",
                     style = MaterialTheme.typography.titleMedium,
                     color = Color(0xFF587069),
+                )
+                Text(
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .clickable { onLogout() },
+                    text = "Sair",
+                    color = Color(0xFF0B6B3A),
+                    fontWeight = FontWeight.Black,
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))

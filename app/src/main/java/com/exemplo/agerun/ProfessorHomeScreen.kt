@@ -11,6 +11,8 @@ import android.location.LocationManager
 import android.os.CancellationSignal
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,8 +23,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +43,8 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,7 +56,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -64,12 +72,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private val ProfessorBackground = Color(0xFFF6F7F2)
-private val ProfessorInk = Color(0xFF10221C)
-private val ProfessorMuted = Color(0xFF587069)
-private val ProfessorGreen = Color(0xFF0B6B3A)
-private val ProfessorSurface = Color.White
-private val ProfessorLine = Color(0xFFD7E3DA)
+private val ProfessorBackground = Color(0xFF08001F)
+private val ProfessorInk = Color(0xFFF8F4FF)
+private val ProfessorMuted = Color(0xFFAAA1C7)
+private val ProfessorGreen = Color(0xFFA7E22E)
+private val ProfessorGreenDark = Color(0xFF4D850B)
+private val ProfessorSurface = Color(0xFF15004C)
+private val ProfessorLine = Color(0xFF4C397C)
+private val ProfessorCardText = Color(0xFF140824)
 
 private data class PlaceSuggestion(
     val title: String,
@@ -82,12 +92,14 @@ fun ProfessorHomeScreen(
     modifier: Modifier = Modifier,
     onOpenEscalas: () -> Unit = {},
     onOpenRecados: () -> Unit = {},
+    onLogout: () -> Unit = {},
 ) {
     val accessToken = authResponse.session?.accessToken.orEmpty()
     val coroutineScope = rememberCoroutineScope()
     var escalas by remember { mutableStateOf<List<Escala>>(emptyList()) }
     var isLoadingEscalas by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf<String?>(null) }
+    var search by remember { mutableStateOf("") }
 
     fun loadEscalas() {
         if (accessToken.isBlank()) return
@@ -118,46 +130,67 @@ fun ProfessorHomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+                .padding(horizontal = 16.dp, vertical = 22.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            ProfessorHeader(nome = authResponse.user.nome)
+            ProfessorHeader(nome = authResponse.user.nome, onLogout = onLogout)
 
+            Text(
+                text = "Treinos essa semana",
+                style = MaterialTheme.typography.labelLarge,
+                color = ProfessorMuted,
+                fontWeight = FontWeight.Bold,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                WeekTrainingCard(day = "Domingo", count = "1")
+                WeekTrainingCard(day = "Segunda", count = "3")
+                WeekTrainingCard(day = "Terca", count = "9")
+                WeekTrainingCard(day = "Quarta", count = escalas.size.coerceAtLeast(1).toString())
+            }
+
+            Text(
+                text = "Alunos",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Black,
+                color = ProfessorInk,
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                ProfessorMetricCard(
-                    modifier = Modifier.weight(1f),
-                    title = "Escalas",
-                    value = escalas.size.toString(),
-                )
-                ProfessorMetricCard(
-                    modifier = Modifier.weight(1f),
-                    title = "Perfil",
-                    value = "professor",
-                )
+                Surface(color = ProfessorGreen, shape = RoundedCornerShape(16.dp)) {
+                    Text(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        text = "20 alunos novos",
+                        color = ProfessorGreenDark,
+                        fontWeight = FontWeight.Black,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+                Surface(
+                    color = Color.Transparent,
+                    shape = RoundedCornerShape(4.dp),
+                    border = BorderStroke(1.dp, ProfessorInk.copy(alpha = 0.75f)),
+                    modifier = Modifier.clickable { onOpenEscalas() },
+                ) {
+                    Text(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        text = "Lista completa ->",
+                        color = ProfessorInk,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    text = "Acoes",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = ProfessorInk,
-                )
-
-                ProfessorActionCard(
-                    title = "Criar escala",
-                    subtitle = "Agende treino, local e horario.",
-                    onClick = onOpenEscalas,
-                )
-                ProfessorActionCard(
-                    title = "Enviar recado",
-                    subtitle = "Publique um aviso rapido para alunos.",
-                    onClick = onOpenRecados,
-                )
-            }
+            StudentSearchField(value = search, onValueChange = { search = it })
+            PrototypeMapCard()
 
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(
@@ -191,10 +224,28 @@ fun ProfessorHomeScreen(
                 } else if (escalas.isEmpty()) {
                     EmptyEscalasCard()
                 } else {
-                    escalas.take(4).forEach { escala ->
+                    escalas.take(2).forEach { escala ->
                         EscalaListCard(escala = escala)
                     }
                 }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                ProfessorActionCard(
+                    modifier = Modifier.weight(1f),
+                    title = "Criar escala",
+                    subtitle = "Novo treino",
+                    onClick = onOpenEscalas,
+                )
+                ProfessorActionCard(
+                    modifier = Modifier.weight(1f),
+                    title = "Recado",
+                    subtitle = "Avisar turma",
+                    onClick = onOpenRecados,
+                )
             }
         }
     }
@@ -202,56 +253,69 @@ fun ProfessorHomeScreen(
 }
 
 @Composable
-private fun ProfessorHeader(nome: String) {
-    Column(
+private fun ProfessorHeader(
+    nome: String,
+    onLogout: () -> Unit,
+) {
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Top,
     ) {
-        Text(
-            text = "Bem vindo(a), professor",
-            style = MaterialTheme.typography.labelLarge,
-            color = ProfessorMuted,
-            fontWeight = FontWeight.Bold,
-        )
-        Box(
-            modifier = Modifier
-                .size(86.dp)
-                .clip(CircleShape)
-                .background(ProfessorGreen),
-            contentAlignment = Alignment.Center,
-        ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(
-                text = "AR",
-                style = MaterialTheme.typography.headlineMedium,
-                color = Color.White,
+                text = "Bem vindo, ${nome.substringBefore(" ")}",
+                style = MaterialTheme.typography.titleMedium,
+                color = ProfessorInk,
                 fontWeight = FontWeight.Black,
             )
+            Surface(
+                color = Color.White,
+                shape = RoundedCornerShape(8.dp),
+            ) {
+                Image(
+                    modifier = Modifier
+                        .width(92.dp)
+                        .height(34.dp)
+                        .padding(6.dp),
+                    painter = painterResource(id = R.drawable.logo),
+                    contentDescription = "AgeRun",
+                    contentScale = ContentScale.Fit,
+                )
+            }
         }
-        Text(
-            text = nome,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Black,
-            color = ProfessorInk,
-        )
+        TextButton(onClick = onLogout) {
+            Text(text = "Sair", color = ProfessorGreen, fontWeight = FontWeight.Black)
+        }
     }
 }
 
 @Composable
-private fun ProfessorMetricCard(
-    title: String,
-    value: String,
-    modifier: Modifier = Modifier,
+private fun WeekTrainingCard(
+    day: String,
+    count: String,
 ) {
     Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = ProfessorSurface),
+        modifier = Modifier
+            .width(72.dp)
+            .height(74.dp),
+        shape = RoundedCornerShape(6.dp),
+        colors = CardDefaults.cardColors(containerColor = ProfessorGreenDark),
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = title, color = ProfessorMuted, style = MaterialTheme.typography.labelLarge)
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(text = value, color = ProfessorInk, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(8.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(text = day, color = ProfessorInk, fontWeight = FontWeight.Black, style = MaterialTheme.typography.labelSmall)
+            Text(
+                modifier = Modifier.align(Alignment.End),
+                text = count,
+                color = ProfessorInk,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Black,
+            )
         }
     }
 }
@@ -260,31 +324,90 @@ private fun ProfessorMetricCard(
 private fun ProfessorActionCard(
     title: String,
     subtitle: String,
+    modifier: Modifier = Modifier,
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier,
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = ProfessorSurface),
+        border = BorderStroke(1.dp, ProfessorLine.copy(alpha = 0.8f)),
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier
+                .clickable(enabled = enabled, onClick = onClick)
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = title, color = ProfessorInk, fontWeight = FontWeight.Bold)
-                Text(text = subtitle, color = ProfessorMuted, style = MaterialTheme.typography.bodyMedium)
-            }
-            OutlinedButton(
-                enabled = enabled,
-                shape = RoundedCornerShape(8.dp),
-                onClick = onClick,
-            ) {
-                Text(text = if (enabled) "Abrir" else "Logo", color = if (enabled) ProfessorGreen else ProfessorMuted)
-            }
+            Text(text = title, color = ProfessorInk, fontWeight = FontWeight.Black)
+            Text(text = subtitle, color = ProfessorMuted, style = MaterialTheme.typography.bodySmall)
         }
+    }
+}
+
+@Composable
+private fun StudentSearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+) {
+    TextField(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        value = value,
+        onValueChange = onValueChange,
+        singleLine = true,
+        placeholder = { Text(text = "Pesquisar alunos", color = ProfessorMuted) },
+        trailingIcon = { Text(text = "⌕", color = ProfessorInk, fontWeight = FontWeight.Black) },
+        shape = RoundedCornerShape(14.dp),
+        colors = TextFieldDefaults.colors(
+            focusedContainerColor = ProfessorSurface,
+            unfocusedContainerColor = ProfessorSurface,
+            focusedTextColor = ProfessorInk,
+            unfocusedTextColor = ProfessorInk,
+            focusedIndicatorColor = Color.Transparent,
+            unfocusedIndicatorColor = Color.Transparent,
+            cursorColor = ProfessorGreen,
+        ),
+    )
+}
+
+@Composable
+private fun PrototypeMapCard() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(174.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFFDDE7E5)),
+    ) {
+        Text(
+            modifier = Modifier.align(Alignment.Center),
+            text = "Sao Paulo",
+            color = Color(0xFF69817E),
+            fontWeight = FontWeight.Bold,
+        )
+        MapPin(label = "1", modifier = Modifier.align(Alignment.TopEnd).padding(top = 30.dp, end = 42.dp))
+        MapPin(label = "2", modifier = Modifier.align(Alignment.TopStart).padding(top = 34.dp, start = 58.dp))
+        MapPin(label = "4", modifier = Modifier.align(Alignment.CenterStart).padding(start = 86.dp))
+        MapPin(label = "7", modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp))
+    }
+}
+
+@Composable
+private fun MapPin(
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(20.dp)
+            .clip(CircleShape)
+            .background(ProfessorBackground),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = label, color = ProfessorInk, fontWeight = FontWeight.Black, style = MaterialTheme.typography.labelSmall)
     }
 }
 
