@@ -1,5 +1,8 @@
 package com.exemplo.agerun.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,8 +29,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.exemplo.agerun.model.Role
 import com.exemplo.agerun.ui.components.AppBackground
 import com.exemplo.agerun.ui.components.AuthField
 import com.exemplo.agerun.ui.components.DecorativeGlow
@@ -37,7 +44,9 @@ import com.exemplo.agerun.ui.theme.CardPurple
 import com.exemplo.agerun.ui.theme.DeepPurple
 import com.exemplo.agerun.ui.theme.Lime
 import com.exemplo.agerun.ui.theme.NightPurple
+import com.exemplo.agerun.ui.theme.Radius
 import com.exemplo.agerun.ui.theme.SoftPurple
+import com.exemplo.agerun.ui.theme.StrokeSoft
 import com.exemplo.agerun.ui.theme.TextMuted
 import com.exemplo.agerun.ui.theme.TextPrimary
 import androidx.compose.ui.text.font.FontWeight
@@ -45,9 +54,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.Row
 
 @Composable
-fun LoginScreen(onLogin: () -> Unit) {
+fun LoginScreen(onLogin: (Role) -> Unit) {
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
+    var selectedRole by rememberSaveable { mutableStateOf(Role.Professor) }
 
     AppBackground {
         Column(
@@ -120,24 +130,30 @@ fun LoginScreen(onLogin: () -> Unit) {
                         keyboardType = KeyboardType.Password,
                         isPassword = true,
                     )
+                    Text(
+                        text = "Entrar como",
+                        color = TextPrimary,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text(
-                            text = "Acesso do professor",
-                            color = Lime,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
+                        RolePill(
+                            label = "Sou professor",
+                            selected = selectedRole == Role.Professor,
+                            onClick = { selectedRole = Role.Professor },
+                            modifier = Modifier.weight(1f),
                         )
-                        Text(
-                            text = "Esqueci minha senha",
-                            color = TextMuted,
-                            fontSize = 14.sp,
+                        RolePill(
+                            label = "Sou aluno",
+                            selected = selectedRole == Role.Aluno,
+                            onClick = { selectedRole = Role.Aluno },
+                            modifier = Modifier.weight(1f),
                         )
                     }
                     Button(
-                        onClick = onLogin,
+                        onClick = { onLogin(selectedRole) },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(58.dp),
@@ -163,5 +179,33 @@ fun LoginScreen(onLogin: () -> Unit) {
             }
             Spacer(modifier = Modifier.height(20.dp))
         }
+    }
+}
+
+@Composable
+private fun RolePill(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(Radius.md))
+            .background(if (selected) Lime else CardPurple)
+            .border(
+                width = if (selected) 0.dp else 1.dp,
+                color = if (selected) Color.Transparent else StrokeSoft,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(Radius.md),
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = if (selected) NightPurple else TextPrimary,
+            style = MaterialTheme.typography.labelLarge,
+        )
     }
 }
