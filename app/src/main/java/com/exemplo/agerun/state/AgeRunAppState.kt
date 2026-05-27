@@ -3,196 +3,126 @@ package com.exemplo.agerun.state
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import com.exemplo.agerun.data.sampleNotices
-import com.exemplo.agerun.data.sampleStudents
-import com.exemplo.agerun.data.sampleWorkouts
+import com.exemplo.agerun.data.InMemoryNoticeRepository
+import com.exemplo.agerun.data.InMemoryProfileRepository
+import com.exemplo.agerun.data.InMemoryStudentRepository
+import com.exemplo.agerun.data.InMemoryWorkoutRepository
+import com.exemplo.agerun.data.NoticeRepository
+import com.exemplo.agerun.data.ProfileRepository
+import com.exemplo.agerun.data.StudentRepository
+import com.exemplo.agerun.data.WorkoutRepository
 import com.exemplo.agerun.model.AppScreen
-import com.exemplo.agerun.model.BottomModule
+import com.exemplo.agerun.model.CoachTab
 import com.exemplo.agerun.model.DashboardMetric
-import com.exemplo.agerun.model.NoticeEntry
-import com.exemplo.agerun.model.PaymentEntry
+import com.exemplo.agerun.model.Role
 import com.exemplo.agerun.model.Student
 import com.exemplo.agerun.model.StudentDraft
+import com.exemplo.agerun.model.StudentTab
 import com.exemplo.agerun.model.WorkoutDay
 import com.exemplo.agerun.model.WorkoutEntry
+import com.exemplo.agerun.model.totalDistanceKm
 
 @Stable
 class AgeRunAppState(
-    initialScreen: AppScreen,
-    initialModule: BottomModule,
+    val studentRepository: StudentRepository = InMemoryStudentRepository(),
+    val workoutRepository: WorkoutRepository = InMemoryWorkoutRepository(),
+    val noticeRepository: NoticeRepository = InMemoryNoticeRepository(),
+    val profileRepository: ProfileRepository = InMemoryProfileRepository(),
 ) {
-    var currentScreen by mutableStateOf(initialScreen)
+    var currentScreen by mutableStateOf(AppScreen.Login)
         private set
-
-    var selectedModule by mutableStateOf(initialModule)
+    var role by mutableStateOf<Role?>(null)
         private set
-
+    var coachTab by mutableStateOf(CoachTab.Inicio)
+        private set
+    var studentTab by mutableStateOf(StudentTab.Inicio)
+        private set
     var selectedStudentId by mutableStateOf<String?>(null)
         private set
-
     var showCreateStudentSheet by mutableStateOf(false)
         private set
 
-    val students = mutableStateListOf<Student>().apply { addAll(sampleStudents()) }
-    val workouts = mutableStateListOf<WorkoutEntry>().apply { addAll(sampleWorkouts()) }
-    val notices = mutableStateListOf<NoticeEntry>().apply { addAll(sampleNotices()) }
+    // "Aluno logado" (demo): primeiro aluno da base.
+    val currentStudentId: String get() = studentRepository.students.first().id
+
+    val students get() = studentRepository.students
+    val workouts get() = workoutRepository.workouts
+    val notices get() = noticeRepository.notices
 
     val selectedStudent: Student?
         get() = students.firstOrNull { it.id == selectedStudentId }
 
     val dashboardMetrics: List<DashboardMetric>
         get() = listOf(
-            DashboardMetric("Ativos", students.count { it.status != "Inativo" }.toString()),
+            DashboardMetric("Alunos ativos", students.count { it.status != "Inativo" }.toString()),
             DashboardMetric("Treinos", workouts.size.toString()),
             DashboardMetric(
-                "Pendencias",
-                students.sumOf { student ->
-                    student.payments.count { payment -> payment.status != "Pago" }
-                }.toString(),
+                "Pendências",
+                students.sumOf { s -> s.payments.count { it.status != "Pago" } }.toString(),
             ),
         )
 
     val workoutDays: List<WorkoutDay>
-        get() = workouts.take(4).mapIndexed { index, workout ->
-            WorkoutDay(
-                day = workout.date,
-                value = workout.distanceKm.toString(),
-                subtitle = workout.focus,
-                highlight = index == 1,
-            )
+        get() = workouts.take(4).mapIndexed { index, w ->
+            WorkoutDay(w.date, "%.0f".format(w.totalDistanceKm()), w.focus, highlight = index == 1)
         }
 
-    fun login() {
-        currentScreen = AppScreen.Panel
-        selectedModule = BottomModule.Home
-    }
-
-    fun selectModule(module: BottomModule) {
-        selectedModule = module
-        if (module != BottomModule.Students) selectedStudentId = null
-    }
-
-    fun selectStudent(studentId: String) {
-        selectedStudentId = studentId
-    }
-
-    fun clearSelectedStudent() {
+    fun login(role: Role) {
+        this.role = role
+        currentScreen = AppScreen.App
+        coachTab = CoachTab.Inicio
+        studentTab = StudentTab.Inicio
         selectedStudentId = null
     }
 
-    fun openCreateStudentSheet() {
-        showCreateStudentSheet = true
+    fun logout() {
+        role = null
+        currentScreen = AppScreen.Login
+        selectedStudentId = null
     }
 
-    fun closeCreateStudentSheet() {
-        showCreateStudentSheet = false
+    fun selectCoachTab(tab: CoachTab) {
+        coachTab = tab
+        if (tab != CoachTab.Alunos) selectedStudentId = null
     }
+
+    fun selectStudentTab(tab: StudentTab) { studentTab = tab }
+
+    fun openSettingsFromAvatar() { selectCoachTab(CoachTab.Config) }
+
+    fun openStudent(id: String) { selectedStudentId = id }
+    fun closeStudent() { selectedStudentId = null }
+
+    fun openCreateStudentSheet() { showCreateStudentSheet = true }
+    fun closeCreateStudentSheet() { showCreateStudentSheet = false }
 
     fun createStudent(draft: StudentDraft) {
-        students.add(
-            0,
+        studentRepository.add(
             Student(
                 id = "student-${students.size + 10}",
-                name = draft.name,
-                email = draft.email,
-                phone = draft.phone,
-                plan = draft.plan.ifBlank { "Plano inicial" },
-                startDate = "Hoje",
-                status = "Novo",
-                monthlyKm = 0,
-                activeWorksheet = "Sem planilha definida",
-                coachNote = "",
-                payments = listOf(
-                    PaymentEntry(
-                        id = "pay-${students.size + 50}",
-                        label = "Primeira mensalidade",
-                        amount = "R$ 0",
-                        dueDate = "--/--",
-                        status = "Pendente",
-                    ),
-                ),
+                name = draft.name, email = draft.email, phone = draft.phone,
+                plan = draft.plan.ifBlank { "Plano inicial" }, startDate = "Hoje",
+                status = "Novo", monthlyKm = 0, activeWorksheet = "Sem planilha definida",
+                coachNote = "", payments = emptyList(),
             ),
         )
         showCreateStudentSheet = false
     }
 
-    fun createNotice(title: String, body: String, pinned: Boolean) {
-        notices.add(
-            0,
-            NoticeEntry(
-                id = "notice-${notices.size + 10}",
-                title = title,
-                body = body,
-                date = "Agora",
-                pinned = pinned,
-            ),
-        )
-    }
-
-    fun createWorkout(entry: WorkoutEntry) {
-        workouts.add(0, entry)
-    }
-
-    fun toggleStudentStatus(studentId: String) {
-        updateStudent(studentId) { student ->
-            student.copy(status = if (student.status == "Ativo") "Inativo" else "Ativo")
-        }
-    }
-
-    fun updateStudentNote(studentId: String, note: String) {
-        updateStudent(studentId) { it.copy(coachNote = note) }
-    }
-
-    fun updateStudentWorksheet(studentId: String, worksheet: String) {
-        updateStudent(studentId) { it.copy(activeWorksheet = worksheet) }
-    }
-
-    fun addStudentPayment(studentId: String, label: String, amount: String, dueDate: String) {
-        updateStudent(studentId) { student ->
-            student.copy(
-                payments = listOf(
-                    PaymentEntry(
-                        id = "pay-${student.payments.size + 100}",
-                        label = label,
-                        amount = amount,
-                        dueDate = dueDate,
-                        status = "Pendente",
-                    ),
-                ) + student.payments,
-            )
-        }
-    }
-
-    fun togglePaymentStatus(studentId: String, paymentId: String) {
-        updateStudent(studentId) { student ->
-            student.copy(
-                payments = student.payments.map { payment ->
-                    if (payment.id == paymentId) {
-                        payment.copy(status = if (payment.status == "Pago") "Pendente" else "Pago")
-                    } else {
-                        payment
-                    }
-                },
-            )
-        }
-    }
-
-    private fun updateStudent(studentId: String, transform: (Student) -> Student) {
-        val index = students.indexOfFirst { it.id == studentId }
-        if (index >= 0) {
-            students[index] = transform(students[index])
-        }
-    }
+    fun createWorkout(entry: WorkoutEntry) = workoutRepository.add(entry)
+    fun createNotice(title: String, body: String, pinned: Boolean) =
+        noticeRepository.add(title, body, pinned)
+    fun toggleStudentStatus(id: String) = studentRepository.toggleStatus(id)
+    fun updateStudentNote(id: String, note: String) = studentRepository.updateNote(id, note)
+    fun updateStudentWorksheet(id: String, ws: String) = studentRepository.updateWorksheet(id, ws)
+    fun addStudentPayment(id: String, label: String, amount: String, due: String) =
+        studentRepository.addPayment(id, label, amount, due)
+    fun togglePaymentStatus(studentId: String, paymentId: String) =
+        studentRepository.togglePaymentStatus(studentId, paymentId)
 }
 
 @Composable
-fun rememberAgeRunAppState(): AgeRunAppState {
-    val initialScreen = rememberSaveable { AppScreen.Login }
-    val initialModule = rememberSaveable { BottomModule.Home }
-    return remember { AgeRunAppState(initialScreen, initialModule) }
-}
+fun rememberAgeRunAppState(): AgeRunAppState = remember { AgeRunAppState() }
