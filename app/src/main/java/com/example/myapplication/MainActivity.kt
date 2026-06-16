@@ -144,11 +144,36 @@ private data class Destination(
     val activeIconRes: Int
 )
 
+private data class DirectoryEntry(
+    val id: String,
+    val name: String,
+    val status: String,
+    val description: String
+)
+
+private data class DirectoryAction(
+    val label: String,
+    val iconRes: Int,
+    val onClick: () -> Unit
+)
+
 private val destinations = listOf(
     Destination("hub_fit", "Hub Fit", R.drawable.ic_nav_hub_fit, R.drawable.ic_nav_hub_fit_active),
     Destination("financeiro", "Financeiro", R.drawable.ic_nav_financeiro, R.drawable.ic_nav_financeiro_active),
     Destination("comunidade", "Comunidade", R.drawable.ic_nav_comunidade, R.drawable.ic_nav_comunidade_active),
     Destination("eventos", "Eventos", R.drawable.ic_nav_eventos, R.drawable.ic_nav_eventos_active)
+)
+
+private val demoModalities = listOf(
+    DirectoryEntry("corrida", "Corrida", "active", "Treinos de rua, pista e provas."),
+    DirectoryEntry("fortalecimento", "Fortalecimento", "active", "Base de forca, mobilidade e estabilidade."),
+    DirectoryEntry("mobilidade", "Mobilidade", "draft", "Sessoes de recuperacao e prevencao.")
+)
+
+private val demoGroups = listOf(
+    DirectoryEntry("iniciante", "Iniciantes", "active", "Grupo para alunos em fase inicial."),
+    DirectoryEntry("performance", "Performance", "active", "Treinos focados em evolucao de pace."),
+    DirectoryEntry("longao", "Longao de sabado", "paused", "Organizacao dos treinos longos do fim de semana.")
 )
 
 @Composable
@@ -174,8 +199,20 @@ private fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
             composable("financeiro") { EarningsScreen() }
             composable("comunidade") { AnnouncementsScreen(state.announcements, state.isLoading, navController::popBackStack) }
             composable("eventos") { EventsScreen(state.events, state.isLoading, navController::popBackStack) }
-            composable("modalities") { PlaceholderScreen("Modalidades", "A estrutura desta area sera definida depois.", navController::popBackStack) }
-            composable("groups") { PlaceholderScreen("Grupos", "A estrutura desta area sera definida depois.", navController::popBackStack) }
+            composable("modalities") {
+                ModalitiesScreen(
+                    onBack = navController::popBackStack,
+                    onGroupsClick = { navController.navigate("groups") },
+                    onModalityClick = { navController.navigate("modality/${it.id}") }
+                )
+            }
+            composable("groups") {
+                GroupsScreen(
+                    onBack = navController::popBackStack,
+                    onStudentsClick = { navController.navigate("students") },
+                    onGroupClick = { navController.navigate("group/${it.id}") }
+                )
+            }
             composable("students") {
                 StudentsScreen(
                     students = state.students,
@@ -189,11 +226,20 @@ private fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                 val student = state.students.firstOrNull { it.id == entry.arguments?.getString("studentId") }
                 DetailScreen("Perfil do aluno", student?.name ?: "Aluno", student?.email.orEmpty(), navController::popBackStack)
             }
+            composable("modality/{modalityId}") { entry ->
+                val modality = demoModalities.firstOrNull { it.id == entry.arguments?.getString("modalityId") }
+                DetailScreen("Detalhe da modalidade", modality?.name ?: "Modalidade", modality?.description.orEmpty(), navController::popBackStack)
+            }
+            composable("group/{groupId}") { entry ->
+                val group = demoGroups.firstOrNull { it.id == entry.arguments?.getString("groupId") }
+                DetailScreen("Detalhe do grupo", group?.name ?: "Grupo", group?.description.orEmpty(), navController::popBackStack)
+            }
             composable("workouts") {
                 WorkoutsScreen(
                     workouts = state.workouts,
                     loading = state.isLoading,
                     onBack = navController::popBackStack,
+                    onModalitiesClick = { navController.navigate("modalities") },
                     onWorkoutClick = { navController.navigate("workout/${it.id}") }
                 )
             }
@@ -501,13 +547,18 @@ private fun ShortcutCircle(label: String, icon: ImageVector, onClick: () -> Unit
 }
 
 @Composable
-private fun ShortcutCircleSvg(label: String, iconRes: Int, onClick: () -> Unit) {
+private fun ShortcutCircleSvg(
+    label: String,
+    iconRes: Int,
+    containerColor: Color = PurpleBackground,
+    onClick: () -> Unit
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
                 .size(68.dp)
                 .clip(CircleShape)
-                .background(PurpleBackground)
+                .background(containerColor)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
@@ -780,6 +831,176 @@ private fun eventTime(value: String): String = runCatching {
 }.getOrDefault("")
 
 @Composable
+private fun <T> DirectoryScreen(
+    title: String,
+    searchPlaceholder: String,
+    filters: List<String>,
+    selectedFilter: String,
+    onFilterSelected: (String) -> Unit,
+    actions: List<DirectoryAction>,
+    items: List<T>,
+    loading: Boolean,
+    itemTitle: (T) -> String,
+    itemStatus: (T) -> String,
+    itemMatchesQuery: (T, String) -> Boolean,
+    onBack: () -> Unit,
+    onItemClick: (T) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var searchMode by remember { mutableStateOf(false) }
+    val searchFocusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
+    val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
+    val filtered = items.filter { item ->
+        itemMatchesQuery(item, query) && (selectedFilter == "Todos" || itemStatus(item) == selectedFilter)
+    }
+
+    BackHandler(enabled = searchMode) {
+        focusManager.clearFocus()
+        searchMode = false
+    }
+
+    LaunchedEffect(searchMode) {
+        if (searchMode) {
+            kotlinx.coroutines.delay(60)
+            searchFocusRequester.requestFocus()
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PurpleBackground)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(PurpleBackground)
+                .padding(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 28.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+            }
+            Text(
+                title,
+                modifier = Modifier.padding(start = 4.dp),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Normal,
+                color = Color.White
+            )
+        }
+        AnimatedVisibility(
+            visible = !searchMode,
+            enter = fadeIn(animationSpec = tween(durationMillis = 180)),
+            exit = fadeOut(animationSpec = tween(durationMillis = 140))
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                actions.forEach { action ->
+                    ShortcutCircleSvg(
+                        label = action.label,
+                        iconRes = action.iconRes,
+                        containerColor = PurpleSurface,
+                        onClick = action.onClick
+                    )
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            color = PurpleSurface,
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        top = 18.dp,
+                        end = 16.dp,
+                        bottom = if (searchMode) 112.dp else 150.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
+                    if (!searchMode) {
+                        item {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 14.dp),
+                                color = PurpleSurface,
+                                shape = RoundedCornerShape(20.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        filters.forEach { option ->
+                                            SlimFilterBadge(
+                                                modifier = Modifier.weight(1f),
+                                                label = option,
+                                                selected = selectedFilter == option,
+                                                onClick = { onFilterSelected(option) }
+                                            )
+                                        }
+                                    }
+                                    StudentSearchButton(
+                                        value = query,
+                                        placeholder = searchPlaceholder,
+                                        onClick = { searchMode = true }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (loading) {
+                        item { LoadingBox() }
+                    }
+                    items(filtered) { item ->
+                        DirectoryListRow(title = itemTitle(item), onClick = { onItemClick(item) })
+                    }
+                }
+
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = searchMode,
+                    enter = fadeIn(animationSpec = tween(durationMillis = 180)),
+                    exit = fadeOut(animationSpec = tween(durationMillis = 140)),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .imePadding()
+                        .padding(
+                            start = 16.dp,
+                            end = 16.dp,
+                            bottom = if (keyboardVisible) 6.dp else 12.dp
+                        )
+                ) {
+                    StudentSearchBar(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = searchPlaceholder,
+                        modifier = Modifier.shadow(14.dp, RoundedCornerShape(50)),
+                        focusRequester = searchFocusRequester
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun StudentsScreen(
     students: List<Student>,
     loading: Boolean,
@@ -819,7 +1040,7 @@ private fun StudentsScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(PurpleBackground)
-                .padding(start = 14.dp, top = 22.dp, end = 14.dp, bottom = 28.dp),
+                .padding(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 28.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
@@ -833,12 +1054,23 @@ private fun StudentsScreen(
                 color = Color.White
             )
         }
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(18.dp)
+        AnimatedVisibility(
+            visible = !searchMode,
+            enter = fadeIn(animationSpec = tween(durationMillis = 180)),
+            exit = fadeOut(animationSpec = tween(durationMillis = 140))
         ) {
-            StudentActionCircle("Novo aluno", "X") { }
-            ShortcutCircleSvg("Grupos", R.drawable.ic_option_grupos, onGroupsClick)
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp)
+            ) {
+                StudentActionCircle("Novo aluno", "X") { }
+                ShortcutCircleSvg(
+                    label = "Grupos",
+                    iconRes = R.drawable.ic_option_grupos,
+                    containerColor = PurpleSurface,
+                    onClick = onGroupsClick
+                )
+            }
         }
 
         Surface(
@@ -852,17 +1084,19 @@ private fun StudentsScreen(
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
+                        start = 16.dp,
                         top = 18.dp,
+                        end = 16.dp,
                         bottom = if (searchMode) 112.dp else 150.dp
                     ),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
                     if (!searchMode) {
                         item {
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp),
+                                    .padding(bottom = 14.dp),
                                 color = PurpleSurface,
                                 shape = RoundedCornerShape(20.dp)
                             ) {
@@ -910,8 +1144,8 @@ private fun StudentsScreen(
                         .navigationBarsPadding()
                         .imePadding()
                         .padding(
-                            start = 12.dp,
-                            end = 12.dp,
+                            start = 16.dp,
+                            end = 16.dp,
                             bottom = if (keyboardVisible) 6.dp else 12.dp
                         )
                 ) {
@@ -934,7 +1168,7 @@ private fun StudentActionCircle(label: String, symbol: String, onClick: () -> Un
             modifier = Modifier
                 .size(68.dp)
                 .clip(CircleShape)
-                .background(PurpleBackground)
+                .background(PurpleSurface)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
@@ -975,7 +1209,7 @@ private fun SlimFilterBadge(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun StudentSearchButton(value: String, onClick: () -> Unit) {
+private fun StudentSearchButton(value: String, onClick: () -> Unit, placeholder: String = "Pesquisar aluno") {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -991,7 +1225,7 @@ private fun StudentSearchButton(value: String, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                if (value.isBlank()) "Pesquisar aluno" else value,
+                if (value.isBlank()) placeholder else value,
                 modifier = Modifier.weight(1f),
                 color = PurpleBackground.copy(alpha = if (value.isBlank()) .55f else 1f),
                 fontSize = 16.sp,
@@ -1009,6 +1243,7 @@ private fun StudentSearchBar(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
+    placeholder: String = "Pesquisar aluno",
     focusRequester: FocusRequester? = null,
     onFocusChanged: (Boolean) -> Unit = {}
 ) {
@@ -1020,7 +1255,7 @@ private fun StudentSearchBar(
             .height(52.dp)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .onFocusChanged { onFocusChanged(it.isFocused) },
-        placeholder = { Text("Pesquisar aluno", color = PurpleBackground.copy(alpha = .55f)) },
+        placeholder = { Text(placeholder, color = PurpleBackground.copy(alpha = .55f)) },
         trailingIcon = { Icon(Icons.Outlined.Search, contentDescription = "Pesquisar", tint = PurpleBackground) },
         singleLine = true,
         shape = RoundedCornerShape(50),
@@ -1038,30 +1273,40 @@ private fun StudentSearchBar(
 
 @Composable
 private fun StudentListRow(student: Student, onClick: () -> Unit) {
+    DirectoryListRow(title = student.name, onClick = onClick)
+}
+
+@Composable
+private fun DirectoryListRow(title: String, onClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(PurpleBackground)
             .clickable(onClick = onClick)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(44.dp)
+                .height(60.dp)
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                student.name,
-                modifier = Modifier.fillMaxWidth(),
+                title,
+                modifier = Modifier.weight(1f),
                 color = Color.White,
-                fontSize = 14.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            Icon(
+                Icons.AutoMirrored.Outlined.ArrowForward,
+                contentDescription = "Abrir aluno",
+                modifier = Modifier.size(18.dp),
+                tint = Color.White.copy(alpha = 0.78f)
+            )
         }
-        HorizontalDivider(color = PurpleSurface, thickness = 1.dp)
+        HorizontalDivider(color = NavigationPurple, thickness = 0.8.dp)
     }
 }
 
@@ -1084,6 +1329,89 @@ private fun StudentCard(student: Student, onClick: () -> Unit) {
 
 @Composable
 private fun WorkoutsScreen(
+    workouts: List<Workout>,
+    loading: Boolean,
+    onBack: () -> Unit,
+    onModalitiesClick: () -> Unit,
+    onWorkoutClick: (Workout) -> Unit
+) {
+    var filter by remember { mutableStateOf("Todos") }
+    DirectoryScreen(
+        title = "Hub Fit - Treinos",
+        searchPlaceholder = "Pesquisar treino",
+        filters = listOf("Todos", "Ativos", "Inativos"),
+        selectedFilter = filter,
+        onFilterSelected = { filter = it },
+        actions = listOf(
+            DirectoryAction("Novo treino", R.drawable.ic_option_treinos) { },
+            DirectoryAction("Modalidades", R.drawable.ic_option_modalidades, onModalitiesClick)
+        ),
+        items = workouts,
+        loading = loading,
+        itemTitle = { it.name },
+        itemStatus = { if (it.status == "active") "Ativos" else "Inativos" },
+        itemMatchesQuery = { workout, query -> workout.name.contains(query, true) },
+        onBack = onBack,
+        onItemClick = onWorkoutClick
+    )
+}
+
+@Composable
+private fun ModalitiesScreen(
+    onBack: () -> Unit,
+    onGroupsClick: () -> Unit,
+    onModalityClick: (DirectoryEntry) -> Unit
+) {
+    var filter by remember { mutableStateOf("Todos") }
+    DirectoryScreen(
+        title = "Hub Fit - Modalidades",
+        searchPlaceholder = "Pesquisar modalidade",
+        filters = listOf("Todos", "Ativas", "Inativas"),
+        selectedFilter = filter,
+        onFilterSelected = { filter = it },
+        actions = listOf(
+            DirectoryAction("Nova modalidade", R.drawable.ic_option_modalidades) { },
+            DirectoryAction("Grupos", R.drawable.ic_option_grupos, onGroupsClick)
+        ),
+        items = demoModalities,
+        loading = false,
+        itemTitle = { it.name },
+        itemStatus = { directoryStatusLabel(it.status) },
+        itemMatchesQuery = { modality, query -> modality.name.contains(query, true) },
+        onBack = onBack,
+        onItemClick = onModalityClick
+    )
+}
+
+@Composable
+private fun GroupsScreen(
+    onBack: () -> Unit,
+    onStudentsClick: () -> Unit,
+    onGroupClick: (DirectoryEntry) -> Unit
+) {
+    var filter by remember { mutableStateOf("Todos") }
+    DirectoryScreen(
+        title = "Hub Fit - Grupos",
+        searchPlaceholder = "Pesquisar grupo",
+        filters = listOf("Todos", "Ativos", "Inativos"),
+        selectedFilter = filter,
+        onFilterSelected = { filter = it },
+        actions = listOf(
+            DirectoryAction("Novo grupo", R.drawable.ic_option_grupos) { },
+            DirectoryAction("Alunos", R.drawable.ic_option_alunos, onStudentsClick)
+        ),
+        items = demoGroups,
+        loading = false,
+        itemTitle = { it.name },
+        itemStatus = { directoryStatusLabel(it.status) },
+        itemMatchesQuery = { group, query -> group.name.contains(query, true) },
+        onBack = onBack,
+        onItemClick = onGroupClick
+    )
+}
+
+@Composable
+private fun LegacyWorkoutsScreen(
     workouts: List<Workout>,
     loading: Boolean,
     onBack: () -> Unit,
@@ -1335,6 +1663,12 @@ private fun statusColor(status: String) = when (status) {
     "active" -> Color(0xFF4CAF50)
     "pending_payment" -> Color(0xFFFFC107)
     else -> Color(0xFFFF6B6B)
+}
+
+private fun directoryStatusLabel(status: String) = when (status) {
+    "active" -> "Ativos"
+    "paused" -> "Pausados"
+    else -> "Inativos"
 }
 
 private fun workoutStatusLabel(status: String) = when (status) {
