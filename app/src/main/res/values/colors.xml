@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">#1E0E38</color>
+    <color name="panel">#371665</color>
+    <color name="panel_deep">#10071F</color>
+    <color name="lime">#AFE217</color>
+    <color name="lime_muted">#485B17</color>
+    <color name="navigation">#5729B4</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="white_70">#B3FFFFFF</color>
+    <color name="black">#FF000000</color>
+</resources>

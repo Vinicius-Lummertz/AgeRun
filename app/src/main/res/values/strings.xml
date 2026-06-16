@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AgeGo</string>
+    <string name="profile_description">Foto do perfil</string>
+    <string name="students">Alunos</string>
+    <string name="groups">Grupos</string>
+    <string name="workouts">Treinos</string>
+    <string name="events">Eventos</string>
+    <string name="alerts">Avisos</string>
+    <string name="training_now">Treinando agora</string>
+    <string name="monitoring">Monitoramento</string>
+    <string name="student_results">Resultados dos alunos</string>
+    <string name="student_results_description">Resumo geral do rendimento dos alunos</string>
+    <string name="classes">Turmas</string>
+    <string name="classes_description">Reúna os seus alunos em equipes!</string>
+    <string name="hub">Hub</string>
+    <string name="earnings">Ganhos</string>
+    <string name="programming">Programação</string>
+    <string name="today">Hoje</string>
+    <string name="tomorrow">Amanhã</string>
+    <string name="tuesday">Terça</string>
+    <string name="lead_event">Liderar evento Xxx...</string>
+    <string name="start">Iniciar</string>
+    <string name="event_name">Evento XX</string>
+    <string name="event_map">Mapa dos eventos</string>
+    <string name="close">Fechar</string>
+</resources>
