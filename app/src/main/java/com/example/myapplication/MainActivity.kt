@@ -96,6 +96,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
@@ -125,6 +126,7 @@ import com.example.myapplication.ui.theme.PurpleBackground
 import com.example.myapplication.ui.theme.PurpleDeep
 import com.example.myapplication.ui.theme.PurpleSurface
 import androidx.compose.ui.text.style.TextAlign
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -648,11 +650,17 @@ private fun PillBottomBar(
 ) {
     val selectedIndex = destinations.indexOfFirst { it.route == currentRoute }.coerceAtLeast(0)
     var barInteracting by remember { mutableStateOf(false) }
+    var pendingIndex by remember { mutableStateOf(selectedIndex) }
     val barHeight by animateDpAsState(
         targetValue = if (barInteracting) 74.dp else 68.dp,
         animationSpec = tween(durationMillis = 140),
         label = "bottom-bar-height"
     )
+    LaunchedEffect(selectedIndex) {
+        if (!barInteracting) {
+            pendingIndex = selectedIndex
+        }
+    }
 
     Surface(
         modifier = Modifier
@@ -666,34 +674,34 @@ private fun PillBottomBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(barHeight)
-                .pointerInput(destinations) {
+                .pointerInput(destinations, currentRoute) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         barInteracting = true
-                        var lastIndex = selectedIndex
 
-                        fun navigateByX(x: Float) {
+                        fun indexByPosition(position: Offset): Int {
                             val widthPerItem = size.width / destinations.size.toFloat()
-                            val index = (x / widthPerItem)
-                                .toInt()
+                            val clampedX = position.x.coerceIn(0f, size.width.toFloat())
+                            return ((clampedX / widthPerItem) - 0.5f)
+                                .roundToInt()
                                 .coerceIn(0, destinations.lastIndex)
-                            if (index != lastIndex) {
-                                lastIndex = index
-                                onNavigate(destinations[index].route)
-                            }
                         }
 
-                        navigateByX(down.position.x)
+                        pendingIndex = indexByPosition(down.position)
                         do {
                             val event = awaitPointerEvent()
                             event.changes.firstOrNull()?.let { change ->
                                 if (change.pressed) {
-                                    navigateByX(change.position.x)
+                                    pendingIndex = indexByPosition(change.position)
                                 }
                             }
                         } while (event.changes.any { it.pressed })
 
+                        val targetRoute = destinations[pendingIndex].route
                         barInteracting = false
+                        if (targetRoute != currentRoute) {
+                            onNavigate(targetRoute)
+                        }
                     }
                 }
         ) {
@@ -701,8 +709,9 @@ private fun PillBottomBar(
             val itemInset = 4.dp
             val indicatorWidth = itemWidth - (itemInset * 2)
             val indicatorHeight = barHeight - (itemInset * 2)
+            val indicatorIndex = if (barInteracting || pendingIndex != selectedIndex) pendingIndex else selectedIndex
             val indicatorOffset by animateDpAsState(
-                targetValue = itemWidth * selectedIndex + itemInset,
+                targetValue = itemWidth * indicatorIndex + itemInset,
                 animationSpec = tween(durationMillis = 260),
                 label = "bottom-bar-indicator"
             )
@@ -722,7 +731,7 @@ private fun PillBottomBar(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 destinations.forEachIndexed { index, destination ->
-                    val selected = index == selectedIndex
+                    val selected = index == indicatorIndex
                     val interactionSource = remember { MutableInteractionSource() }
                     val pressed by interactionSource.collectIsPressedAsState()
                     val glowAlpha by animateFloatAsState(
