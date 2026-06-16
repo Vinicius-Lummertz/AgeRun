@@ -7,6 +7,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.animateDpAsState
@@ -18,7 +20,9 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
@@ -31,14 +35,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -49,19 +59,36 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Campaign
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DirectionsRun
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Favorite
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FitnessCenter
+import androidx.compose.material.icons.outlined.Flag
+import androidx.compose.material.icons.outlined.GifBox
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.InsertEmoticon
+import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.Poll
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -74,6 +101,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
@@ -81,6 +109,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -93,6 +122,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -101,6 +131,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
@@ -113,6 +144,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.myapplication.data.Announcement
+import com.example.myapplication.data.CommunityPost
+import com.example.myapplication.data.CommunityPostType
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.Workout
 import com.example.myapplication.data.Event
@@ -182,6 +215,8 @@ private val demoGroups = listOf(
 private fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val navController = rememberNavController()
+    val routines = remember { mutableStateListOf<DirectoryEntry>().apply { addAll(demoModalities) } }
+    val groups = remember { mutableStateListOf<DirectoryEntry>().apply { addAll(demoGroups) } }
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     val showBottomBar = destinations.any { it.route == currentRoute }
@@ -190,28 +225,57 @@ private fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .padding( top = 16.dp)
         ) {
             NavHost(
                 navController = navController,
                 startDestination = "hub_fit",
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                enterTransition = { EnterTransition.None },
+                exitTransition = { ExitTransition.None },
+                popEnterTransition = { EnterTransition.None },
+                popExitTransition = { ExitTransition.None }
             ) {
             composable("hub_fit") { HomeScreenV2(state) { navController.navigate(it) } }
             composable("financeiro") { EarningsScreen() }
-            composable("comunidade") { AnnouncementsScreen(state.announcements, state.isLoading, navController::popBackStack) }
-            composable("eventos") { EventsScreen(state.events, state.isLoading, navController::popBackStack) }
+            composable("comunidade") {
+                CommunityScreen(
+                    posts = state.communityPosts,
+                    workouts = state.workouts,
+                    loading = state.isLoading,
+                    onBack = navController::popBackStack,
+                    onCreatePost = { target -> navController.navigate("community/new/$target") },
+                    onPostClick = { post -> navController.navigate("community/post/${post.id}") },
+                    onLike = viewModel::toggleCommunityLike,
+                    onComment = viewModel::addCommunityComment,
+                    onShare = viewModel::shareCommunityPost
+                )
+            }
+            composable("eventos") {
+                EventsScreen(
+                    events = state.events,
+                    loading = state.isLoading,
+                    onBack = navController::popBackStack,
+                    onNewEvent = { navController.navigate("event/new") },
+                    onEventClick = { navController.navigate("event/${it.id}") }
+                )
+            }
             composable("modalities") {
-                ModalitiesScreen(
+                RoutinesScreen(
+                    routines = routines,
                     onBack = navController::popBackStack,
                     onGroupsClick = { navController.navigate("groups") },
-                    onModalityClick = { navController.navigate("modality/${it.id}") }
+                    onNewRoutine = { navController.navigate("routine/new") },
+                    onRoutineClick = { navController.navigate("routine/${it.id}") }
                 )
             }
             composable("groups") {
                 GroupsScreen(
+                    groups = groups,
                     onBack = navController::popBackStack,
                     onStudentsClick = { navController.navigate("students") },
+                    onNewGroup = { navController.navigate("group/new") },
                     onGroupClick = { navController.navigate("group/${it.id}") }
                 )
             }
@@ -221,20 +285,101 @@ private fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                     loading = state.isLoading,
                     onBack = navController::popBackStack,
                     onGroupsClick = { navController.navigate("groups") },
+                    onNewStudent = { navController.navigate("student/new") },
                     onStudentClick = { navController.navigate("student/${it.id}") }
+                )
+            }
+            composable("student/new") {
+                StudentFormScreen(
+                    student = null,
+                    onBack = navController::popBackStack,
+                    onSave = {
+                        viewModel.saveStudent(it)
+                        navController.popBackStack()
+                    },
+                    onDelete = null
                 )
             }
             composable("student/{studentId}") { entry ->
                 val student = state.students.firstOrNull { it.id == entry.arguments?.getString("studentId") }
-                DetailScreen("Perfil do aluno", student?.name ?: "Aluno", student?.email.orEmpty(), navController::popBackStack)
+                StudentFormScreen(
+                    student = student,
+                    onBack = navController::popBackStack,
+                    onSave = {
+                        viewModel.saveStudent(it)
+                        navController.popBackStack()
+                    },
+                    onDelete = {
+                        viewModel.deleteStudent(it)
+                        navController.popBackStack()
+                    }
+                )
             }
-            composable("modality/{modalityId}") { entry ->
-                val modality = demoModalities.firstOrNull { it.id == entry.arguments?.getString("modalityId") }
-                DetailScreen("Detalhe da modalidade", modality?.name ?: "Modalidade", modality?.description.orEmpty(), navController::popBackStack)
+            composable("routine/new") {
+                DirectoryFormScreen(
+                    title = "Nova rotina",
+                    entry = null,
+                    nameLabel = "Nome da rotina",
+                    descriptionLabel = "Descricao",
+                    onBack = navController::popBackStack,
+                    onSave = {
+                        routines.add(0, it.copy(id = it.id.ifBlank { java.util.UUID.randomUUID().toString() }))
+                        navController.popBackStack()
+                    },
+                    onDelete = null
+                )
+            }
+            composable("routine/{routineId}") { entry ->
+                val routine = routines.firstOrNull { it.id == entry.arguments?.getString("routineId") }
+                DirectoryFormScreen(
+                    title = "Editar rotina",
+                    entry = routine,
+                    nameLabel = "Nome da rotina",
+                    descriptionLabel = "Descricao",
+                    onBack = navController::popBackStack,
+                    onSave = { saved ->
+                        val index = routines.indexOfFirst { it.id == saved.id }
+                        if (index >= 0) routines[index] = saved
+                        navController.popBackStack()
+                    },
+                    onDelete = { id ->
+                        routines.removeAll { it.id == id }
+                        navController.popBackStack()
+                    }
+                )
             }
             composable("group/{groupId}") { entry ->
-                val group = demoGroups.firstOrNull { it.id == entry.arguments?.getString("groupId") }
-                DetailScreen("Detalhe do grupo", group?.name ?: "Grupo", group?.description.orEmpty(), navController::popBackStack)
+                val group = groups.firstOrNull { it.id == entry.arguments?.getString("groupId") }
+                DirectoryFormScreen(
+                    title = "Editar grupo",
+                    entry = group,
+                    nameLabel = "Nome do grupo",
+                    descriptionLabel = "Descricao",
+                    onBack = navController::popBackStack,
+                    onSave = { saved ->
+                        val index = groups.indexOfFirst { it.id == saved.id }
+                        if (index >= 0) groups[index] = saved
+                        navController.popBackStack()
+                    },
+                    onDelete = { id ->
+                        groups.removeAll { it.id == id }
+                        navController.popBackStack()
+                    }
+                )
+            }
+            composable("group/new") {
+                DirectoryFormScreen(
+                    title = "Novo grupo",
+                    entry = null,
+                    nameLabel = "Nome do grupo",
+                    descriptionLabel = "Descricao",
+                    onBack = navController::popBackStack,
+                    onSave = {
+                        groups.add(0, it.copy(id = it.id.ifBlank { java.util.UUID.randomUUID().toString() }))
+                        navController.popBackStack()
+                    },
+                    onDelete = null
+                )
             }
             composable("workouts") {
                 WorkoutsScreen(
@@ -242,18 +387,115 @@ private fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                     loading = state.isLoading,
                     onBack = navController::popBackStack,
                     onModalitiesClick = { navController.navigate("modalities") },
+                    onNewWorkout = { navController.navigate("workout/new") },
                     onWorkoutClick = { navController.navigate("workout/${it.id}") }
+                )
+            }
+            composable("workout/new") {
+                WorkoutFormScreen(
+                    workout = null,
+                    onBack = navController::popBackStack,
+                    onSave = {
+                        viewModel.saveWorkout(it)
+                    },
+                    onDelete = null
                 )
             }
             composable("workout/{workoutId}") { entry ->
                 val workout = state.workouts.firstOrNull { it.id == entry.arguments?.getString("workoutId") }
-                DetailScreen("Detalhe do treino", workout?.name ?: "Treino", workout?.description.orEmpty(), navController::popBackStack)
+                WorkoutFormScreen(
+                    workout = workout,
+                    onBack = navController::popBackStack,
+                    onSave = {
+                        viewModel.saveWorkout(it)
+                    },
+                    onDelete = {
+                        viewModel.deleteWorkout(it)
+                        navController.popBackStack()
+                    }
+                )
             }
             composable("announcements") {
-                AnnouncementsScreen(state.announcements, state.isLoading, navController::popBackStack)
+                CommunityScreen(
+                    posts = state.communityPosts,
+                    workouts = state.workouts,
+                    loading = state.isLoading,
+                    onBack = navController::popBackStack,
+                    onCreatePost = { target -> navController.navigate("community/new/$target") },
+                    onPostClick = { post -> navController.navigate("community/post/${post.id}") },
+                    onLike = viewModel::toggleCommunityLike,
+                    onComment = viewModel::addCommunityComment,
+                    onShare = viewModel::shareCommunityPost
+                )
+            }
+            composable("community/new/{target}") { entry ->
+                val target = entry.arguments?.getString("target") ?: "groups"
+                CommunityPostFormScreen(
+                    workouts = state.workouts,
+                    target = target,
+                    onBack = navController::popBackStack,
+                    onSave = {
+                        viewModel.saveCommunityPost(it)
+                        navController.popBackStack()
+                    }
+                )
+            }
+            composable("community/post/{postId}") { entry ->
+                val post = state.communityPosts.firstOrNull { it.id == entry.arguments?.getString("postId") }
+                if (post != null) {
+                    CommunityPostDetailScreen(
+                        post = post,
+                        workoutName = state.workouts.firstOrNull { it.id == post.linkedWorkoutId }?.name,
+                        onBack = navController::popBackStack,
+                        onLike = { viewModel.toggleCommunityLike(post.id) },
+                        onComment = { content -> viewModel.addCommunityComment(post.id, content) },
+                        onReply = { commentId, content -> viewModel.replyCommunityComment(post.id, commentId, content) },
+                        onCommentLike = { commentId -> viewModel.toggleCommunityCommentLike(post.id, commentId) },
+                        onShare = { viewModel.shareCommunityPost(post.id) }
+                    )
+                }
+            }
+            composable("event/new") {
+                EventFormScreen(
+                    event = null,
+                    onBack = navController::popBackStack,
+                    onSave = {
+                        viewModel.saveEvent(it)
+                        navController.popBackStack()
+                    },
+                    onDelete = null
+                )
+            }
+            composable("event/{eventId}") { entry ->
+                val event = state.events.firstOrNull { it.id == entry.arguments?.getString("eventId") }
+                EventFormScreen(
+                    event = event,
+                    onBack = navController::popBackStack,
+                    onSave = {
+                        viewModel.saveEvent(it)
+                        navController.popBackStack()
+                    },
+                    onDelete = {
+                        viewModel.deleteEvent(it)
+                        navController.popBackStack()
+                    }
+                )
             }
         }
             if (showBottomBar) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(180.dp)
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Transparent,
+                                0.42f to PurpleBackground.copy(alpha = 0.72f),
+                                1f to PurpleDeep
+                            )
+                        )
+                )
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -262,7 +504,9 @@ private fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                         .padding(horizontal = 18.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    TrainingNowBar()
+                    if (currentRoute == "hub_fit") {
+                        TrainingNowBar()
+                    }
                     PillBottomBar(
                         currentRoute = currentRoute,
                         onNavigate = { route ->
@@ -350,7 +594,7 @@ private fun HomeScreenV2(state: AgeGoUiState, navigate: (String) -> Unit) {
                         horizontalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
                         ShortcutCircleSvg("Alunos", R.drawable.ic_option_alunos) { navigate("students") }
-                        ShortcutCircleSvg("Modalidades", R.drawable.ic_option_modalidades) { navigate("modalities") }
+                        ShortcutCircleSvg("Rotinas", R.drawable.ic_option_modalidades) { navigate("modalities") }
                         ShortcutCircleSvg("Treinos", R.drawable.ic_option_treinos) { navigate("workouts") }
                         ShortcutCircleSvg("Grupos", R.drawable.ic_option_grupos) { navigate("groups") }
                     }
@@ -839,6 +1083,14 @@ private fun eventTime(value: String): String = runCatching {
     "${time}h"
 }.getOrDefault("")
 
+private fun defaultEventDate(): String {
+    val calendar = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 7)
+        set(java.util.Calendar.MINUTE, 0)
+    }
+    return java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.US).format(calendar.time)
+}
+
 @Composable
 private fun <T> DirectoryScreen(
     title: String,
@@ -974,10 +1226,13 @@ private fun <T> DirectoryScreen(
                         }
                     }
                     if (loading) {
-                        item { LoadingBox() }
-                    }
-                    items(filtered) { item ->
-                        DirectoryListRow(title = itemTitle(item), onClick = { onItemClick(item) })
+                        repeat(8) { index ->
+                            item { DirectorySkeletonRow(index) }
+                        }
+                    } else {
+                        items(filtered) { item ->
+                            DirectoryListRow(title = itemTitle(item), onClick = { onItemClick(item) })
+                        }
                     }
                 }
 
@@ -1015,6 +1270,7 @@ private fun StudentsScreen(
     loading: Boolean,
     onBack: () -> Unit,
     onGroupsClick: () -> Unit,
+    onNewStudent: () -> Unit,
     onStudentClick: (Student) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -1072,7 +1328,7 @@ private fun StudentsScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                StudentActionCircle("Novo aluno", "X") { }
+                StudentActionCircle("Novo aluno", "+") { onNewStudent() }
                 ShortcutCircleSvg(
                     label = "Grupos",
                     iconRes = R.drawable.ic_option_grupos,
@@ -1133,12 +1389,24 @@ private fun StudentsScreen(
                                 }
                             }
                         }
-                        items(filtered) { student ->
-                            StudentListRow(student = student, onClick = { onStudentClick(student) })
+                        if (loading) {
+                            repeat(8) { index ->
+                                item { DirectorySkeletonRow(index) }
+                            }
+                        } else {
+                            items(filtered) { student ->
+                                StudentListRow(student = student, onClick = { onStudentClick(student) })
+                            }
                         }
                     } else {
-                        items(filtered) { student ->
-                            StudentListRow(student = student, onClick = { onStudentClick(student) })
+                        if (loading) {
+                            repeat(8) { index ->
+                                item { DirectorySkeletonRow(index) }
+                            }
+                        } else {
+                            items(filtered) { student ->
+                                StudentListRow(student = student, onClick = { onStudentClick(student) })
+                            }
                         }
                     }
                 }
@@ -1320,6 +1588,41 @@ private fun DirectoryListRow(title: String, onClick: () -> Unit) {
 }
 
 @Composable
+private fun DirectorySkeletonRow(index: Int) {
+    val widthFraction = when (index % 4) {
+        0 -> 0.72f
+        1 -> 0.58f
+        2 -> 0.82f
+        else -> 0.66f
+    }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(60.dp)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(widthFraction)
+                    .height(14.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.White.copy(alpha = 0.16f))
+            )
+            Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.12f))
+            )
+        }
+        HorizontalDivider(color = NavigationPurple.copy(alpha = 0.55f), thickness = 0.8.dp)
+    }
+}
+
+@Composable
 private fun StudentCard(student: Student, onClick: () -> Unit) {
     Card(Modifier.fillMaxWidth().clickable(onClick = onClick), colors = CardDefaults.cardColors(containerColor = PurpleSurface)) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1342,6 +1645,7 @@ private fun WorkoutsScreen(
     loading: Boolean,
     onBack: () -> Unit,
     onModalitiesClick: () -> Unit,
+    onNewWorkout: () -> Unit,
     onWorkoutClick: (Workout) -> Unit
 ) {
     var filter by remember { mutableStateOf("Todos") }
@@ -1352,8 +1656,8 @@ private fun WorkoutsScreen(
         selectedFilter = filter,
         onFilterSelected = { filter = it },
         actions = listOf(
-            DirectoryAction("Novo treino", R.drawable.ic_option_treinos) { },
-            DirectoryAction("Modalidades", R.drawable.ic_option_modalidades, onModalitiesClick)
+            DirectoryAction("Novo treino", R.drawable.ic_option_treinos, onNewWorkout),
+            DirectoryAction("Rotinas", R.drawable.ic_option_modalidades, onModalitiesClick)
         ),
         items = workouts,
         loading = loading,
@@ -1366,36 +1670,40 @@ private fun WorkoutsScreen(
 }
 
 @Composable
-private fun ModalitiesScreen(
+private fun RoutinesScreen(
+    routines: List<DirectoryEntry>,
     onBack: () -> Unit,
     onGroupsClick: () -> Unit,
-    onModalityClick: (DirectoryEntry) -> Unit
+    onNewRoutine: () -> Unit,
+    onRoutineClick: (DirectoryEntry) -> Unit
 ) {
     var filter by remember { mutableStateOf("Todos") }
     DirectoryScreen(
-        title = "Hub Fit - Modalidades",
-        searchPlaceholder = "Pesquisar modalidade",
+        title = "Hub Fit - Rotinas",
+        searchPlaceholder = "Pesquisar rotina",
         filters = listOf("Todos", "Ativas", "Inativas"),
         selectedFilter = filter,
         onFilterSelected = { filter = it },
         actions = listOf(
-            DirectoryAction("Nova modalidade", R.drawable.ic_option_modalidades) { },
+            DirectoryAction("Nova rotina", R.drawable.ic_option_modalidades, onNewRoutine),
             DirectoryAction("Grupos", R.drawable.ic_option_grupos, onGroupsClick)
         ),
-        items = demoModalities,
+        items = routines,
         loading = false,
         itemTitle = { it.name },
         itemStatus = { directoryStatusLabel(it.status) },
         itemMatchesQuery = { modality, query -> modality.name.contains(query, true) },
         onBack = onBack,
-        onItemClick = onModalityClick
+        onItemClick = onRoutineClick
     )
 }
 
 @Composable
 private fun GroupsScreen(
+    groups: List<DirectoryEntry>,
     onBack: () -> Unit,
     onStudentsClick: () -> Unit,
+    onNewGroup: () -> Unit,
     onGroupClick: (DirectoryEntry) -> Unit
 ) {
     var filter by remember { mutableStateOf("Todos") }
@@ -1406,16 +1714,1016 @@ private fun GroupsScreen(
         selectedFilter = filter,
         onFilterSelected = { filter = it },
         actions = listOf(
-            DirectoryAction("Novo grupo", R.drawable.ic_option_grupos) { },
+            DirectoryAction("Novo grupo", R.drawable.ic_option_grupos, onNewGroup),
             DirectoryAction("Alunos", R.drawable.ic_option_alunos, onStudentsClick)
         ),
-        items = demoGroups,
+        items = groups,
         loading = false,
         itemTitle = { it.name },
         itemStatus = { directoryStatusLabel(it.status) },
         itemMatchesQuery = { group, query -> group.name.contains(query, true) },
         onBack = onBack,
         onItemClick = onGroupClick
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StudentFormScreen(
+    student: Student?,
+    onBack: () -> Unit,
+    onSave: (Student) -> Unit,
+    onDelete: ((String) -> Unit)?
+) {
+    var name by remember(student?.id) { mutableStateOf(student?.name.orEmpty()) }
+    var phone by remember(student?.id) { mutableStateOf(student?.phone.orEmpty()) }
+    var routine by remember(student?.id) { mutableStateOf(student?.routine.orEmpty().ifBlank { student?.planName.orEmpty() }) }
+
+    SimpleFormScaffold(
+        title = if (student == null) "Novo aluno" else "Editar aluno",
+        onBack = onBack,
+        onDelete = if (student != null && onDelete != null) ({ onDelete(student.id) }) else null
+    ) {
+        item { FormTextField(name, { name = it }, "Nome") }
+        item { FormTextField(phone, { phone = it }, "Telefone") }
+        item { FormTextField(routine, { routine = it }, "Rotina") }
+        item {
+            SaveButton(enabled = name.isNotBlank()) {
+                onSave(
+                    Student(
+                        id = student?.id.orEmpty(),
+                        name = name.trim(),
+                        email = student?.email.orEmpty(),
+                        phone = phone.trim(),
+                        routine = routine.trim(),
+                        planName = routine.trim().ifBlank { student?.planName ?: "Sem rotina" },
+                        status = student?.status ?: "active"
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkoutFormScreen(
+    workout: Workout?,
+    onBack: () -> Unit,
+    onSave: (Workout) -> Unit,
+    onDelete: ((String) -> Unit)?
+) {
+    var step by remember(workout?.id) { mutableStateOf(0) }
+    var name by remember(workout?.id) { mutableStateOf(workout?.name.orEmpty()) }
+    var sections by remember(workout?.id) { mutableStateOf(listOf(WorkoutBuilderSection(1))) }
+
+    BackHandler { if (step > 0) step-- else onBack() }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PurpleBackground)
+    ) {
+        WorkoutFlowHeader(
+            breadcrumb = when (step) {
+                0 -> "Treinos"
+                1 -> "Informacoes do treino"
+                else -> "Construtor de treino"
+            },
+            title = when (step) {
+                0 -> "Adicionar novo treino"
+                1 -> "Construtor de treino"
+                else -> "Treino criado"
+            },
+            onBack = { if (step > 0) step-- else onBack() }
+        )
+
+        Spacer(Modifier.weight(1f))
+
+        WorkoutBottomPanel {
+            when (step) {
+                0 -> {
+                    WorkoutNameStep(name = name, onNameChange = { name = it })
+                    WorkoutNextButton(enabled = name.isNotBlank()) { step = 1 }
+                }
+                1 -> {
+                    WorkoutBuilderStep(
+                        sections = sections,
+                        onSectionsChange = { sections = it },
+                        onFinish = {
+                            onSave(
+                                Workout(
+                                    id = workout?.id.orEmpty(),
+                                    name = name.trim(),
+                                    description = workout?.description ?: "Treino personalizado",
+                                    iconName = workout?.iconName,
+                                    status = "active"
+                                )
+                            )
+                            step = 2
+                        }
+                    )
+                }
+                else -> WorkoutCreatedStep(
+                    onBackToWorkouts = onBack,
+                    onAddModality = { },
+                    onDelete = if (workout != null && onDelete != null) ({ onDelete(workout.id) }) else null
+                )
+            }
+        }
+    }
+}
+
+private data class WorkoutBuilderSection(val number: Int, val expanded: Boolean = false)
+private data class WorkoutGoal(val id: Int, val name: String = "Nome do objetivo", val value: String = "20 min", val mode: String = "tempo")
+
+@Composable
+private fun WorkoutFlowHeader(breadcrumb: String, title: String, onBack: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, top = 22.dp, end = 16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+            }
+            Text(breadcrumb, color = Color.White.copy(alpha = .68f), fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(20.dp))
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_option_treinos),
+                contentDescription = "Treino",
+                modifier = Modifier.size(120.dp),
+                tint = Color.White
+            )
+        }
+        Text(
+            title,
+            modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+            color = Color.White,
+            textAlign = TextAlign.Center,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+@Composable
+private fun WorkoutBottomPanel(content: @Composable ColumnScope.() -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .heightIn(max = maxHeight * .78f),
+            color = PurpleSurface,
+            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                content = content
+            )
+        }
+    }
+}
+
+@Composable
+private fun WorkoutNameStep(name: String, onNameChange: (String) -> Unit) {
+    TextField(
+        value = name,
+        onValueChange = onNameChange,
+        modifier = Modifier.fillMaxWidth().height(58.dp),
+        placeholder = { Text("Nome do treino", color = Color.White.copy(alpha = .60f)) },
+        singleLine = true,
+        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+        colors = TextFieldDefaults.colors(
+            focusedTextColor = Color.White,
+            unfocusedTextColor = Color.White,
+            focusedContainerColor = Color(0xFF2C1252),
+            unfocusedContainerColor = Color(0xFF2C1252),
+            focusedIndicatorColor = Color(0xFF5529B0),
+            unfocusedIndicatorColor = Color(0xFF5529B0),
+            cursorColor = Lime
+        )
+    )
+}
+
+@Composable
+private fun WorkoutNextButton(enabled: Boolean, onClick: () -> Unit) {
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+        Button(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier.size(56.dp),
+            shape = CircleShape,
+            contentPadding = PaddingValues(0.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep)
+        ) {
+            Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = "Avancar")
+        }
+    }
+}
+
+@Composable
+private fun WorkoutBuilderStep(
+    sections: List<WorkoutBuilderSection>,
+    onSectionsChange: (List<WorkoutBuilderSection>) -> Unit,
+    onFinish: () -> Unit
+) {
+    Column(
+        modifier = Modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        sections.forEach { section ->
+            WorkoutSectionCard(section = section)
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .border(1.dp, Color(0xFF5529B0).copy(alpha = .7f), RoundedCornerShape(14.dp))
+                .background(Color(0xFF2C1252))
+                .clickable {
+                    onSectionsChange(
+                        sections.map { it.copy(expanded = false) } +
+                            WorkoutBuilderSection(sections.size + 1, expanded = false)
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text("Adicionar etapa +", color = Color.White.copy(alpha = .78f), fontSize = 14.sp)
+        }
+        WorkoutNextButton(enabled = true, onClick = onFinish)
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun WorkoutSectionCard(section: WorkoutBuilderSection) {
+    var goals by remember(section.number) { mutableStateOf(listOf(WorkoutGoal(1))) }
+    var expandedGoalId by remember(section.number) { mutableStateOf<Int?>(null) }
+    var editingGoalId by remember(section.number) { mutableStateOf<Int?>(null) }
+    var goalNameHadFocus by remember(section.number) { mutableStateOf(false) }
+    val goalNameFocusRequester = remember { FocusRequester() }
+    val sectionMode = goals.firstOrNull()?.mode ?: "tempo"
+    val sectionTotal = sectionTotalLabel(goals)
+
+    LaunchedEffect(editingGoalId) {
+        if (editingGoalId != null) {
+            kotlinx.coroutines.delay(40)
+            goalNameFocusRequester.requestFocus()
+        } else {
+            goalNameHadFocus = false
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 110.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(PurpleBackground)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Secao ${section.number}",
+                    color = Color.White,
+                    fontSize = 16.sp
+                )
+                Text(
+                    " - $sectionTotal",
+                    color = Color.White.copy(alpha = .60f),
+                    fontSize = 16.sp
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .border(1.dp, Color.White.copy(alpha = .64f), CircleShape)
+                    .clickable {
+                        goals = goals + WorkoutGoal(
+                            id = (goals.maxOfOrNull { it.id } ?: 0) + 1,
+                            value = if (sectionMode == "tempo") "20 min" else "3 km",
+                            mode = sectionMode
+                        )
+                        expandedGoalId = null
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Outlined.Add, contentDescription = "Adicionar objetivo", tint = Color.White, modifier = Modifier.size(18.dp))
+            }
+        }
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            goals.forEach { goal ->
+                val expanded = expandedGoalId == goal.id
+                Column(Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 60.dp)
+                            .clip(
+                                if (expanded) {
+                                    RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
+                                } else {
+                                    RoundedCornerShape(8.dp)
+                                }
+                            )
+                            .background(PurpleSurface)
+                            .combinedClickable(
+                                onClick = { expandedGoalId = if (expanded) null else goal.id },
+                                onDoubleClick = { editingGoalId = goal.id }
+                            )
+                            .padding(horizontal = 24.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (editingGoalId == goal.id) {
+                            TextField(
+                                value = goal.name,
+                                onValueChange = { next ->
+                                    goals = goals.map { if (it.id == goal.id) it.copy(name = next) else it }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(40.dp)
+                                    .focusRequester(goalNameFocusRequester)
+                                    .onFocusChanged {
+                                        if (it.isFocused) {
+                                            goalNameHadFocus = true
+                                        } else if (goalNameHadFocus) {
+                                            editingGoalId = null
+                                        }
+                                    },
+                                singleLine = true,
+                                colors = TextFieldDefaults.colors(
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White,
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent,
+                                    cursorColor = Lime
+                                )
+                            )
+                        } else {
+                            Text("${goal.name} 2x", modifier = Modifier.weight(1f), color = Color.White, fontSize = 16.sp)
+                        }
+                        Text(goal.value, color = Color.White.copy(alpha = .82f), fontSize = 16.sp)
+                    }
+                    if (expanded) {
+                        WorkoutConfigDropdown(
+                            goal = goal,
+                            onGoalChange = { updated ->
+                                goals = goals.map { if (it.id == goal.id) updated else it }
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WorkoutModeBadge(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        color = if (selected) Lime else Color(0xFF2C0B59),
+        shape = RoundedCornerShape(50)
+    ) {
+        Text(
+            label,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            color = if (selected) PurpleDeep else Color.White.copy(alpha = .72f),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun WorkoutConfigDropdown(goal: WorkoutGoal, onGoalChange: (WorkoutGoal) -> Unit) {
+    val valueFocusRequester = remember { FocusRequester() }
+    val items = if (goal.mode == "tempo") {
+        listOf("Tempo" to goal.value, "Descanso" to "2 min", "Repeticoes" to "2x")
+    } else {
+        listOf("Distancia" to goal.value, "Descanso" to "2 min", "Repeticoes" to "2x")
+    }
+    var values by remember(goal.id, goal.mode) { mutableStateOf(items) }
+    var editingIndex by remember(goal.id, goal.mode) { mutableStateOf<Int?>(null) }
+    var draftValue by remember(goal.id, goal.mode) { mutableStateOf("") }
+    var valueHadFocus by remember(goal.id, goal.mode) { mutableStateOf(false) }
+
+    LaunchedEffect(editingIndex) {
+        if (editingIndex != null) {
+            kotlinx.coroutines.delay(40)
+            valueFocusRequester.requestFocus()
+        }
+    }
+
+    fun commitValue(index: Int?) {
+        if (index == null) return
+        val label = values.getOrNull(index)?.first ?: return
+        val formatted = formatWorkoutValue(label, draftValue)
+        values = values.mapIndexed { itemIndex, item ->
+            if (itemIndex == index) item.first to formatted else item
+        }
+        if (index == 0) onGoalChange(goal.copy(value = formatted))
+        editingIndex = null
+        valueHadFocus = false
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(bottomStart = 10.dp, bottomEnd = 10.dp))
+            .background(Color(0xFF2C0B59))
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            WorkoutModeBadge(
+                label = "Tempo",
+                selected = goal.mode == "tempo",
+                onClick = {
+                    commitValue(editingIndex)
+                    onGoalChange(goal.copy(mode = "tempo", value = "20 min"))
+                    editingIndex = null
+                },
+                modifier = Modifier.weight(1f)
+            )
+            WorkoutModeBadge(
+                label = "Distancia",
+                selected = goal.mode == "distancia",
+                onClick = {
+                    commitValue(editingIndex)
+                    onGoalChange(goal.copy(mode = "distancia", value = "3 km"))
+                    editingIndex = null
+                },
+                modifier = Modifier.weight(1f)
+            )
+        }
+        values.forEachIndexed { index, (label, value) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 28.dp)
+                    .clickable {
+                        commitValue(editingIndex)
+                        editingIndex = index
+                        draftValue = rawWorkoutValue(value)
+                        valueHadFocus = false
+                    }
+                    .padding(horizontal = 24.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(label, modifier = Modifier.weight(1f), color = Color.White.copy(alpha = .62f), fontSize = 16.sp)
+                if (editingIndex == index) {
+                    TextField(
+                        value = draftValue,
+                        onValueChange = { next ->
+                            draftValue = next.filter { it.isDigit() || it == ',' || it == '.' }
+                        },
+                        modifier = Modifier
+                            .width(96.dp)
+                            .height(44.dp)
+                            .focusRequester(valueFocusRequester)
+                            .onFocusChanged {
+                                if (it.isFocused) {
+                                    valueHadFocus = true
+                                } else if (valueHadFocus) {
+                                    commitValue(index)
+                                }
+                            },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            cursorColor = Lime
+                        )
+                    )
+                } else {
+                    Text(value, color = Color.White, fontSize = 16.sp, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+private fun sectionTotalLabel(goals: List<WorkoutGoal>): String {
+    val tempoTotal = goals
+        .filter { it.mode == "tempo" }
+        .sumOf { rawWorkoutValue(it.value).replace(',', '.').toDoubleOrNull() ?: 0.0 }
+    val distanceTotal = goals
+        .filter { it.mode == "distancia" }
+        .sumOf { rawWorkoutValue(it.value).replace(',', '.').toDoubleOrNull() ?: 0.0 }
+    return listOfNotNull(
+        if (tempoTotal > 0.0) "${formatSectionNumber(tempoTotal)} min" else null,
+        if (distanceTotal > 0.0) "${formatSectionNumber(distanceTotal)} km" else null
+    ).joinToString(" | ").ifBlank { "0 min" }
+}
+
+private fun formatSectionNumber(value: Double): String =
+    if (value % 1.0 == 0.0) value.toInt().toString() else "%.1f".format(java.util.Locale.US, value)
+
+private fun rawWorkoutValue(value: String): String =
+    value.filter { it.isDigit() || it == ',' || it == '.' }
+
+private fun formatWorkoutValue(label: String, rawValue: String): String {
+    val number = rawWorkoutValue(rawValue).replace(',', '.')
+    if (number.isBlank()) return ""
+    val normalized = number.trimEnd('.')
+    return when (label) {
+        "Distancia" -> "$normalized km"
+        "Repeticoes" -> "${normalized}x"
+        else -> "$normalized min"
+    }
+}
+
+@Composable
+private fun WorkoutCreatedStep(onBackToWorkouts: () -> Unit, onAddModality: () -> Unit, onDelete: (() -> Unit)?) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(
+            onClick = onBackToWorkouts,
+            modifier = Modifier.weight(1f).height(48.dp),
+            shape = RoundedCornerShape(50),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2C1252), contentColor = Color.White)
+        ) {
+            Image(painterResource(R.drawable.ic_option_treinos), contentDescription = null, modifier = Modifier.size(18.dp))
+            Text("Voltar", Modifier.padding(start = 8.dp))
+        }
+        Button(
+            onClick = onAddModality,
+            modifier = Modifier.weight(1f).height(48.dp),
+            shape = RoundedCornerShape(50),
+            colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep)
+        ) {
+            Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text("Modalidade", Modifier.padding(start = 6.dp), fontSize = 13.sp)
+        }
+    }
+    if (onDelete != null) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            TextButton(onClick = onDelete) {
+                Text("Excluir treino", color = Color.White.copy(alpha = .58f), fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EventFormScreen(
+    event: Event?,
+    onBack: () -> Unit,
+    onSave: (Event) -> Unit,
+    onDelete: ((String) -> Unit)?
+) {
+    var name by remember(event?.id) { mutableStateOf(event?.name.orEmpty()) }
+    var eventDate by remember(event?.id) { mutableStateOf(event?.eventDate ?: defaultEventDate()) }
+    var location by remember(event?.id) { mutableStateOf(event?.location.orEmpty()) }
+    var description by remember(event?.id) { mutableStateOf(event?.description.orEmpty()) }
+
+    SimpleFormScaffold(
+        title = if (event == null) "Novo evento" else "Editar evento",
+        onBack = onBack,
+        onDelete = if (event != null && onDelete != null) ({ onDelete(event.id) }) else null
+    ) {
+        item { FormTextField(name, { name = it }, "Nome do evento") }
+        item { FormTextField(eventDate, { eventDate = it }, "Data e hora") }
+        item { FormTextField(location, { location = it }, "Local") }
+        item { FormTextField(description, { description = it }, "Descricao") }
+        item {
+            SaveButton(enabled = name.isNotBlank() && eventDate.isNotBlank()) {
+                onSave(Event(event?.id.orEmpty(), name.trim(), description.trim(), eventDate.trim(), location.trim()))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DirectoryFormScreen(
+    title: String,
+    entry: DirectoryEntry?,
+    nameLabel: String,
+    descriptionLabel: String,
+    onBack: () -> Unit,
+    onSave: (DirectoryEntry) -> Unit,
+    onDelete: ((String) -> Unit)?
+) {
+    var name by remember(entry?.id) { mutableStateOf(entry?.name.orEmpty()) }
+    var description by remember(entry?.id) { mutableStateOf(entry?.description.orEmpty()) }
+    var status by remember(entry?.id) { mutableStateOf(entry?.status ?: "active") }
+
+    SimpleFormScaffold(
+        title = title,
+        onBack = onBack,
+        onDelete = if (entry != null && onDelete != null) ({ onDelete(entry.id) }) else null
+    ) {
+        item { FormTextField(name, { name = it }, nameLabel) }
+        item { FormTextField(description, { description = it }, descriptionLabel) }
+        item { StatusPicker(status) { status = it } }
+        item {
+            SaveButton(enabled = name.isNotBlank()) {
+                onSave(DirectoryEntry(entry?.id.orEmpty(), name.trim(), status, description.trim()))
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SimpleFormScaffold(
+    title: String,
+    onBack: () -> Unit,
+    onDelete: (() -> Unit)? = null,
+    content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit
+) {
+    Scaffold(
+        containerColor = PurpleBackground,
+        topBar = {
+            TopAppBar(
+                title = { Text(title) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar") } },
+                actions = {
+                    if (onDelete != null) {
+                        IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, "Excluir") }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = PurpleBackground)
+            )
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .imePadding(),
+            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            content = content
+        )
+    }
+}
+
+@Composable
+private fun SaveButton(enabled: Boolean, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth().height(52.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep)
+    ) {
+        Icon(Icons.Outlined.Check, null)
+        Text("Salvar", Modifier.padding(start = 8.dp), fontWeight = FontWeight.Bold)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FormTextField(value: String, onValueChange: (String) -> Unit, label: String) {
+    TextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        shape = RoundedCornerShape(14.dp),
+        colors = TextFieldDefaults.colors(
+            focusedTextColor = Color.White,
+            unfocusedTextColor = Color.White,
+            focusedContainerColor = PurpleSurface,
+            unfocusedContainerColor = PurpleSurface,
+            focusedIndicatorColor = Lime,
+            unfocusedIndicatorColor = Color.Transparent,
+            cursorColor = Lime
+        )
+    )
+}
+
+@Composable
+private fun StatusPicker(status: String, onStatusChange: (String) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("active" to "Ativo", "draft" to "Rascunho", "inactive" to "Inativo").forEach { (value, label) ->
+            SlimFilterBadge(
+                modifier = Modifier.weight(1f),
+                label = label,
+                selected = status == value,
+                onClick = { onStatusChange(value) }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CommunityPostFormScreen(
+    workouts: List<Workout>,
+    target: String,
+    onBack: () -> Unit,
+    onSave: (CommunityPost) -> Unit
+) {
+    var type by remember { mutableStateOf(CommunityPostType.POST) }
+    var content by remember { mutableStateOf("") }
+    var options by remember { mutableStateOf("") }
+    var mediaLabel by remember { mutableStateOf<String?>(null) }
+    var gifLabel by remember { mutableStateOf<String?>(null) }
+    var generatedImagePrompt by remember { mutableStateOf("") }
+    var showEmojiPanel by remember { mutableStateOf(false) }
+    var scheduledAt by remember { mutableStateOf("") }
+    var location by remember { mutableStateOf("") }
+    var contentWarning by remember { mutableStateOf("") }
+    var activeComposerPanel by remember { mutableStateOf<String?>(null) }
+    var selectedWorkoutId by remember { mutableStateOf(workouts.firstOrNull()?.id) }
+
+    SimpleFormScaffold(title = if (target == "events") "Publicar em eventos" else "Publicar em grupos", onBack = onBack) {
+        item {
+            Row(verticalAlignment = Alignment.Top) {
+                Image(
+                    painter = painterResource(R.drawable.profile),
+                    contentDescription = "Sua foto",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(42.dp).clip(CircleShape)
+                )
+                Column(Modifier.padding(start = 12.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    FormTextField(content, { content = it }, "O que esta acontecendo?")
+                    CommunityComposerToolbar(
+                        onMedia = { activeComposerPanel = if (activeComposerPanel == "media") null else "media" },
+                        onGif = { activeComposerPanel = if (activeComposerPanel == "gif") null else "gif" },
+                        onGenerate = { activeComposerPanel = if (activeComposerPanel == "generate") null else "generate" },
+                        onPoll = {
+                            type = if (type == CommunityPostType.POLL) CommunityPostType.POST else CommunityPostType.POLL
+                            activeComposerPanel = "poll"
+                        },
+                        onEmoji = {
+                            showEmojiPanel = !showEmojiPanel
+                            activeComposerPanel = null
+                        },
+                        onSchedule = { activeComposerPanel = if (activeComposerPanel == "schedule") null else "schedule" },
+                        onLocation = { activeComposerPanel = if (activeComposerPanel == "location") null else "location" },
+                        onDisclosure = { activeComposerPanel = if (activeComposerPanel == "warning") null else "warning" }
+                    )
+                }
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PostTypeChip("Post", type == CommunityPostType.POST) { type = CommunityPostType.POST }
+                PostTypeChip("Enquete", type == CommunityPostType.POLL) { type = CommunityPostType.POLL }
+                PostTypeChip("Desafio", type == CommunityPostType.CHALLENGE) { type = CommunityPostType.CHALLENGE }
+            }
+        }
+        if (mediaLabel != null || gifLabel != null || generatedImagePrompt.isNotBlank() || scheduledAt.isNotBlank() || location.isNotBlank() || contentWarning.isNotBlank()) {
+            item {
+                CommunityComposerPreview(
+                    mediaLabel = mediaLabel,
+                    gifLabel = gifLabel,
+                    generatedImagePrompt = generatedImagePrompt,
+                    scheduledAt = scheduledAt,
+                    location = location,
+                    contentWarning = contentWarning
+                )
+            }
+        }
+        activeComposerPanel?.let { panel ->
+            item {
+                CommunityComposerPanel(
+                    panel = panel,
+                    mediaLabel = mediaLabel,
+                    gifLabel = gifLabel,
+                    generatedImagePrompt = generatedImagePrompt,
+                    scheduledAt = scheduledAt,
+                    location = location,
+                    contentWarning = contentWarning,
+                    onMediaSelected = { mediaLabel = it },
+                    onGifSelected = { gifLabel = it },
+                    onPromptChange = { generatedImagePrompt = it },
+                    onScheduleChange = { scheduledAt = it },
+                    onLocationChange = { location = it },
+                    onWarningChange = { contentWarning = it },
+                    onClose = { activeComposerPanel = null }
+                )
+            }
+        }
+        if (showEmojiPanel) {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("👏", "🔥", "🏃", "💚", "💪").forEach { emoji ->
+                        Surface(
+                            modifier = Modifier.size(42.dp).clickable { content += emoji },
+                            color = PurpleSurface,
+                            shape = CircleShape
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(emoji, fontSize = 20.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (type == CommunityPostType.POLL) {
+            item { FormTextField(options, { options = it }, "Opcoes separadas por virgula") }
+        }
+        if (type == CommunityPostType.CHALLENGE) {
+            items(workouts) { workout ->
+                SlimFilterBadge(workout.name, selectedWorkoutId == workout.id, { selectedWorkoutId = workout.id }, Modifier.fillMaxWidth())
+            }
+        }
+        item {
+            SaveButton(enabled = content.isNotBlank()) {
+                onSave(
+                    CommunityPost(
+                        id = "",
+                        type = type,
+                        content = content.trim(),
+                        target = target,
+                        authorName = "Voce",
+                        linkedWorkoutId = if (type == CommunityPostType.CHALLENGE) selectedWorkoutId else null,
+                        pollOptions = if (type == CommunityPostType.POLL) options.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList(),
+                        mediaLabel = mediaLabel,
+                        gifLabel = gifLabel,
+                        generatedImagePrompt = generatedImagePrompt.ifBlank { null },
+                        scheduledAt = scheduledAt.ifBlank { null },
+                        location = location.ifBlank { null },
+                        contentWarning = contentWarning.ifBlank { null }
+                    )
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommunityComposerToolbar(
+    onMedia: () -> Unit,
+    onGif: () -> Unit,
+    onGenerate: () -> Unit,
+    onPoll: () -> Unit,
+    onEmoji: () -> Unit,
+    onSchedule: () -> Unit,
+    onLocation: () -> Unit,
+    onDisclosure: () -> Unit
+) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        item { ComposerToolButton(Icons.Outlined.Image, "Midia", onMedia) }
+        item { ComposerToolButton(Icons.Outlined.GifBox, "GIF", onGif) }
+        item { ComposerToolButton(Icons.Outlined.AutoAwesome, "Gerar imagem", onGenerate) }
+        item { ComposerToolButton(Icons.Outlined.Poll, "Enquete", onPoll) }
+        item { ComposerToolButton(Icons.Outlined.InsertEmoticon, "Emoji", onEmoji) }
+        item { ComposerToolButton(Icons.Outlined.Schedule, "Agendar", onSchedule) }
+        item { ComposerToolButton(Icons.Outlined.LocationOn, "Local", onLocation) }
+        item { ComposerToolButton(Icons.Outlined.Flag, "Aviso", onDisclosure) }
+    }
+}
+
+@Composable
+private fun ComposerToolButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(36.dp)) {
+        Icon(icon, contentDescription = contentDescription, tint = Lime, modifier = Modifier.size(22.dp))
+    }
+}
+
+@Composable
+private fun CommunityComposerPreview(
+    mediaLabel: String?,
+    gifLabel: String?,
+    generatedImagePrompt: String,
+    scheduledAt: String,
+    location: String,
+    contentWarning: String
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        mediaLabel?.let { ComposerPreviewChip(Icons.Outlined.Image, it) }
+        gifLabel?.let { ComposerPreviewChip(Icons.Outlined.GifBox, it) }
+        if (generatedImagePrompt.isNotBlank()) ComposerPreviewChip(Icons.Outlined.AutoAwesome, "Gerar: $generatedImagePrompt")
+        if (scheduledAt.isNotBlank()) ComposerPreviewChip(Icons.Outlined.Schedule, "Agendado: $scheduledAt")
+        if (location.isNotBlank()) ComposerPreviewChip(Icons.Outlined.LocationOn, location)
+        if (contentWarning.isNotBlank()) ComposerPreviewChip(Icons.Outlined.Flag, contentWarning)
+    }
+}
+
+@Composable
+private fun ComposerPreviewChip(icon: ImageVector, label: String) {
+    Surface(color = PurpleSurface, shape = RoundedCornerShape(12.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, null, tint = Lime, modifier = Modifier.size(18.dp))
+            Text(label, Modifier.padding(start = 8.dp), color = Color.White, fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun CommunityComposerPanel(
+    panel: String,
+    mediaLabel: String?,
+    gifLabel: String?,
+    generatedImagePrompt: String,
+    scheduledAt: String,
+    location: String,
+    contentWarning: String,
+    onMediaSelected: (String?) -> Unit,
+    onGifSelected: (String?) -> Unit,
+    onPromptChange: (String) -> Unit,
+    onScheduleChange: (String) -> Unit,
+    onLocationChange: (String) -> Unit,
+    onWarningChange: (String) -> Unit,
+    onClose: () -> Unit
+) {
+    Surface(color = PurpleSurface, shape = RoundedCornerShape(12.dp)) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    when (panel) {
+                        "media" -> "Midia"
+                        "gif" -> "GIF"
+                        "generate" -> "Gerar imagem"
+                        "poll" -> "Enquete"
+                        "schedule" -> "Agendar"
+                        "location" -> "Localizacao"
+                        else -> "Aviso"
+                    },
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onClose) { Text("Fechar", color = Lime) }
+            }
+            when (panel) {
+                "media" -> ComposerChoiceGrid(
+                    options = listOf("Foto do treino", "Video curto", "Resultado do treino", "Remover midia"),
+                    selected = mediaLabel,
+                    onSelect = { onMediaSelected(if (it == "Remover midia") null else it) }
+                )
+                "gif" -> ComposerChoiceGrid(
+                    options = listOf("Aplausos", "Bora correr", "Fogo no pace", "Remover GIF"),
+                    selected = gifLabel,
+                    onSelect = { onGifSelected(if (it == "Remover GIF") null else it) }
+                )
+                "generate" -> FormTextField(generatedImagePrompt, onPromptChange, "Descreva a imagem")
+                "poll" -> Text("Use o campo de opcoes abaixo para separar as alternativas por virgula.", color = Color.White.copy(alpha = .72f), fontSize = 13.sp)
+                "schedule" -> FormTextField(scheduledAt, onScheduleChange, "Quando publicar?")
+                "location" -> FormTextField(location, onLocationChange, "Onde foi?")
+                "warning" -> FormTextField(contentWarning, onWarningChange, "Aviso de conteudo")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ComposerChoiceGrid(options: List<String>, selected: String?, onSelect: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                row.forEach { option ->
+                    SlimFilterBadge(
+                        modifier = Modifier.weight(1f),
+                        label = option,
+                        selected = selected == option,
+                        onClick = { onSelect(option) }
+                    )
+                }
+                if (row.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PostTypeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    AssistChip(
+        onClick = onClick,
+        label = { Text(label) },
+        leadingIcon = { if (selected) Icon(Icons.Outlined.Check, null, modifier = Modifier.size(16.dp)) },
+        colors = AssistChipDefaults.assistChipColors(
+            containerColor = if (selected) Lime else PurpleSurface,
+            labelColor = if (selected) PurpleDeep else Color.White,
+            leadingIconContentColor = PurpleDeep
+        )
     )
 }
 
@@ -1488,18 +2796,476 @@ private fun EarningsScreen() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EventsScreen(events: List<Event>, loading: Boolean, onBack: () -> Unit) {
-    ListScaffold("Eventos", "Criar evento", onBack) {
-        Text("Agenda de eventos", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        if (loading) LoadingBox()
-        if (events.isEmpty() && !loading) {
-            Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
-                Text("Nenhum evento cadastrado.", Modifier.fillMaxWidth().padding(18.dp))
+private fun EventsScreen(
+    events: List<Event>,
+    loading: Boolean,
+    onBack: () -> Unit,
+    onNewEvent: () -> Unit,
+    onEventClick: (Event) -> Unit
+) {
+    Scaffold(
+        containerColor = PurpleBackground,
+        topBar = {
+            TopAppBar(
+                title = { Text("Eventos", fontWeight = FontWeight.Bold) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar") } },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = PurpleBackground)
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onNewEvent, containerColor = Lime, contentColor = PurpleDeep) {
+                Icon(Icons.Outlined.Add, "Criar evento")
             }
         }
-        events.sortedBy { it.eventDate }.forEach { EventCard(it) }
+    ) { padding ->
+        LazyColumn(
+            Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 110.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item { Text("Agenda de eventos", fontWeight = FontWeight.Bold, fontSize = 18.sp) }
+            if (loading) item { LoadingBox() }
+            if (events.isEmpty() && !loading) {
+                item {
+                    Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
+                        Text("Nenhum evento cadastrado.", Modifier.fillMaxWidth().padding(18.dp))
+                    }
+                }
+            }
+            items(events.sortedBy { it.eventDate }) { event ->
+                Box(Modifier.clickable { onEventClick(event) }) { EventCard(event) }
+            }
+        }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CommunityScreen(
+    posts: List<CommunityPost>,
+    workouts: List<Workout>,
+    loading: Boolean,
+    onBack: () -> Unit,
+    onCreatePost: (String) -> Unit,
+    onPostClick: (CommunityPost) -> Unit,
+    onLike: (String) -> Unit,
+    onComment: (String) -> Unit,
+    onShare: (String) -> Unit
+) {
+    val storyAuthors = remember(posts) {
+        posts.map { it.authorName }.distinct().ifEmpty { listOf("Voce", "Marina", "Coach Ana") }
+    }
+
+    Box(Modifier.fillMaxSize().background(PurpleSurface)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 174.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(PurpleBackground)
+                        .padding(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("Comunidade", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        contentPadding = PaddingValues(end = 4.dp)
+                    ) {
+                        items(storyAuthors) { author ->
+                            CommunityStoryBubble(author)
+                        }
+                    }
+                }
+            }
+            if (posts.isEmpty()) {
+                item {
+                    Box(Modifier.fillMaxWidth().background(PurpleSurface).padding(18.dp)) {
+                        Text("Nenhuma publicacao criada ainda.", color = Color.White.copy(alpha = .72f))
+                    }
+                    HorizontalDivider(color = NavigationPurple, thickness = 0.8.dp)
+                }
+            }
+            items(posts) { post ->
+                CommunityPostCard(
+                    post = post,
+                    workoutName = workouts.firstOrNull { it.id == post.linkedWorkoutId }?.name,
+                    onClick = { onPostClick(post) },
+                    onLike = { onLike(post.id) },
+                    onComment = { onComment(post.id) },
+                    onShare = { onShare(post.id) }
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(150.dp)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.48f to PurpleBackground.copy(alpha = .62f),
+                        1f to PurpleDeep
+                    )
+                )
+        )
+        FloatingActionButton(
+            onClick = { onCreatePost("groups") },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(end = 20.dp, bottom = 112.dp),
+            containerColor = Lime,
+            contentColor = PurpleDeep,
+            shape = RoundedCornerShape(22.dp)
+        ) {
+            Icon(Icons.Outlined.Add, "Criar publicacao")
+        }
+    }
+}
+
+@Composable
+private fun CommunityStoryBubble(authorName: String) {
+    Column(
+        modifier = Modifier.width(66.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(Lime),
+            contentAlignment = Alignment.Center
+        ) {
+            Image(
+                painter = painterResource(R.drawable.profile),
+                contentDescription = "Story de $authorName",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(50.dp).clip(CircleShape)
+            )
+        }
+        Text(
+            authorName,
+            modifier = Modifier.padding(top = 6.dp),
+            color = Color.White,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun CommunityPostCard(
+    post: CommunityPost,
+    workoutName: String?,
+    onClick: () -> Unit,
+    onLike: () -> Unit,
+    onComment: () -> Unit,
+    onShare: () -> Unit
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(PurpleSurface)
+            .clickable(onClick = onClick)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(R.drawable.profile),
+                    contentDescription = "Foto de ${post.authorName}",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(38.dp).clip(CircleShape)
+                )
+                Column(Modifier.padding(start = 10.dp).weight(1f)) {
+                    Text(post.authorName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(if (post.target == "events") "Eventos" else "Grupos", color = Color.White.copy(alpha = .56f), fontSize = 12.sp)
+                }
+                if (post.type != CommunityPostType.POST) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            if (post.type == CommunityPostType.POLL) Icons.Outlined.Poll else Icons.Outlined.DirectionsRun,
+                            null,
+                            tint = Lime,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(postTypeLabel(post.type), Modifier.padding(start = 5.dp), color = Lime, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+            post.contentWarning?.let {
+                Surface(color = Color(0xFFFFC107).copy(alpha = .18f), shape = RoundedCornerShape(10.dp)) {
+                    Text(it, Modifier.fillMaxWidth().padding(10.dp), color = Color(0xFFFFD166), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                }
+            }
+            Text(post.content, color = Color.White.copy(alpha = .86f), lineHeight = 21.sp)
+            CommunityPostAttachments(post)
+            if (post.type == CommunityPostType.POLL && post.pollOptions.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    post.pollOptions.forEach { option ->
+                        Surface(color = PurpleBackground, shape = RoundedCornerShape(10.dp)) {
+                            Text(option, Modifier.fillMaxWidth().padding(12.dp), color = Color.White)
+                        }
+                    }
+                }
+            }
+            if (post.type == CommunityPostType.CHALLENGE && workoutName != null) {
+                Surface(color = Lime.copy(alpha = .18f), shape = RoundedCornerShape(10.dp)) {
+                    Text("Treino: $workoutName", Modifier.fillMaxWidth().padding(12.dp), color = Lime, fontWeight = FontWeight.SemiBold)
+                }
+            }
+            HorizontalDivider(color = Color.White.copy(alpha = .12f))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                CommunityActionButton(if (post.liked) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder, post.likes.toString(), if (post.liked) Color(0xFFFF6B8A) else Color.White, onLike)
+                CommunityActionButton(Icons.Outlined.ChatBubbleOutline, post.comments.toString(), Color.White, onComment)
+                CommunityActionButton(Icons.Outlined.Share, post.shares.toString(), Color.White, onShare)
+            }
+        }
+        HorizontalDivider(color = NavigationPurple, thickness = 0.8.dp)
+    }
+}
+
+@Composable
+private fun CommunityPostAttachments(post: CommunityPost) {
+    val hasAttachments = post.mediaLabel != null ||
+        post.gifLabel != null ||
+        post.generatedImagePrompt != null ||
+        post.scheduledAt != null ||
+        post.location != null
+    if (!hasAttachments) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        post.mediaLabel?.let { CommunityAttachmentRow(Icons.Outlined.Image, it) }
+        post.gifLabel?.let { CommunityAttachmentRow(Icons.Outlined.GifBox, it) }
+        post.generatedImagePrompt?.let { CommunityAttachmentRow(Icons.Outlined.AutoAwesome, "Imagem gerada: $it") }
+        post.scheduledAt?.let { CommunityAttachmentRow(Icons.Outlined.Schedule, "Agendado: $it") }
+        post.location?.let { CommunityAttachmentRow(Icons.Outlined.LocationOn, it) }
+    }
+}
+
+@Composable
+private fun CommunityAttachmentRow(icon: ImageVector, label: String) {
+    Surface(color = PurpleBackground, shape = RoundedCornerShape(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, null, tint = Lime, modifier = Modifier.size(18.dp))
+            Text(label, Modifier.padding(start = 8.dp), color = Color.White.copy(alpha = .82f), fontSize = 13.sp)
+        }
+    }
+}
+
+@Composable
+private fun CommunityActionButton(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) {
+    TextButton(onClick = onClick) {
+        Icon(icon, null, tint = tint, modifier = Modifier.size(20.dp))
+        Text(label, Modifier.padding(start = 6.dp), color = tint, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CommunityPostDetailScreen(
+    post: CommunityPost,
+    workoutName: String?,
+    onBack: () -> Unit,
+    onLike: () -> Unit,
+    onComment: (String) -> Unit,
+    onReply: (String, String) -> Unit,
+    onCommentLike: (String) -> Unit,
+    onShare: () -> Unit
+) {
+    var commentText by remember(post.id) { mutableStateOf("") }
+    var replyingTo by remember(post.id) { mutableStateOf<String?>(null) }
+    val replyAuthor = post.commentThreads.findComment(replyingTo)?.authorName
+
+    Scaffold(
+        containerColor = PurpleSurface,
+        topBar = {
+            TopAppBar(
+                title = { Text("Postagem") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = PurpleBackground)
+            )
+        }
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(bottom = 120.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            item {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(R.drawable.profile),
+                            contentDescription = "Foto de ${post.authorName}",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(44.dp).clip(CircleShape)
+                        )
+                        Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                            Text(post.authorName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text(if (post.target == "events") "Eventos" else "Grupos", color = Color.White.copy(alpha = .56f), fontSize = 13.sp)
+                        }
+                        if (post.type != CommunityPostType.POST) {
+                            Text(postTypeLabel(post.type), color = Lime, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                    post.contentWarning?.let {
+                        Surface(color = Color(0xFFFFC107).copy(alpha = .18f), shape = RoundedCornerShape(10.dp)) {
+                            Text(it, Modifier.fillMaxWidth().padding(10.dp), color = Color(0xFFFFD166), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        }
+                    }
+                    Text(post.content, color = Color.White.copy(alpha = .9f), fontSize = 18.sp, lineHeight = 25.sp)
+                    CommunityPostAttachments(post)
+                    if (post.type == CommunityPostType.CHALLENGE && workoutName != null) {
+                        Surface(color = Lime.copy(alpha = .18f), shape = RoundedCornerShape(10.dp)) {
+                            Text("Treino: $workoutName", Modifier.fillMaxWidth().padding(12.dp), color = Lime, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Text("${post.likes} curtidas", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
+                        CommunityActionButton(if (post.liked) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder, post.likes.toString(), if (post.liked) Color(0xFFFF6B8A) else Color.White, onLike)
+                        CommunityActionButton(Icons.Outlined.ChatBubbleOutline, post.comments.toString(), Color.White) { replyingTo = null }
+                        CommunityActionButton(Icons.Outlined.Share, post.shares.toString(), Color.White, onShare)
+                    }
+                }
+                HorizontalDivider(color = NavigationPurple, thickness = 0.8.dp)
+            }
+            item {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (replyingTo != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Respondendo $replyAuthor", color = Lime, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { replyingTo = null }) { Text("Cancelar", color = Color.White) }
+                        }
+                    }
+                    FormTextField(commentText, { commentText = it }, if (replyingTo == null) "Adicionar comentario" else "Responder comentario")
+                    Button(
+                        onClick = {
+                            val target = replyingTo
+                            if (target == null) {
+                                onComment(commentText.trim())
+                            } else {
+                                onReply(target, commentText.trim())
+                            }
+                            commentText = ""
+                            replyingTo = null
+                        },
+                        enabled = commentText.isNotBlank(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (replyingTo == null) "Comentar" else "Responder", fontWeight = FontWeight.Bold)
+                    }
+                }
+                HorizontalDivider(color = NavigationPurple, thickness = 0.8.dp)
+            }
+            item {
+                Text(
+                    "Comentarios",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
+            items(post.commentThreads) { comment ->
+                CommunityCommentRow(
+                    comment = comment,
+                    depth = 0,
+                    onLike = onCommentLike,
+                    onReply = { replyingTo = it }
+                )
+            }
+            if (post.commentThreads.isEmpty()) {
+                item {
+                    Text(
+                        "Nenhum comentario ainda.",
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        color = Color.White.copy(alpha = .62f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommunityCommentRow(
+    comment: com.example.myapplication.data.CommunityComment,
+    depth: Int,
+    onLike: (String) -> Unit,
+    onReply: (String) -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = (16 + depth * 28).dp, end = 16.dp, top = 10.dp, bottom = 4.dp)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Image(
+                painter = painterResource(R.drawable.profile),
+                contentDescription = "Foto de ${comment.authorName}",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(34.dp).clip(CircleShape)
+            )
+            Box(Modifier.width(1.dp).height(34.dp).background(NavigationPurple))
+        }
+        Column(Modifier.padding(start = 10.dp).weight(1f)) {
+            Text(comment.authorName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text(comment.content, color = Color.White.copy(alpha = .82f), fontSize = 14.sp, lineHeight = 20.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { onLike(comment.id) }, contentPadding = PaddingValues(0.dp)) {
+                    Icon(
+                        if (comment.liked) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder,
+                        null,
+                        tint = if (comment.liked) Color(0xFFFF6B8A) else Color.White.copy(alpha = .72f),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(comment.likes.toString(), Modifier.padding(start = 4.dp), color = Color.White.copy(alpha = .72f), fontSize = 12.sp)
+                }
+                TextButton(onClick = { onReply(comment.id) }, contentPadding = PaddingValues(0.dp)) {
+                    Text("Responder", color = Lime, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+        comment.replies.forEach { reply ->
+            CommunityCommentRow(reply, depth + 1, onLike, onReply)
+        }
+    }
+}
+
+private fun List<com.example.myapplication.data.CommunityComment>.findComment(commentId: String?): com.example.myapplication.data.CommunityComment? {
+    if (commentId == null) return null
+    for (comment in this) {
+        if (comment.id == commentId) return comment
+        val nested = comment.replies.findComment(commentId)
+        if (nested != null) return nested
+    }
+    return null
+}
+
+private fun postTypeLabel(type: CommunityPostType) = when (type) {
+    CommunityPostType.POST -> ""
+    CommunityPostType.POLL -> "Enquete"
+    CommunityPostType.CHALLENGE -> "Desafio"
 }
 
 @Composable

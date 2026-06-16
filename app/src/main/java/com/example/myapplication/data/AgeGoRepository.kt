@@ -32,10 +32,10 @@ class DemoAgeGoRepository(
 ) : AgeGoRepository {
     override suspend fun loadDashboard() = DashboardData(
         students = listOf(
-            Student("1", "Marina Alves", "marina@agego.com", "Performance", "active"),
-            Student("2", "Rafael Souza", "rafael@agego.com", "Essencial", "pending_payment"),
-            Student("3", "Camila Lima", "camila@agego.com", "Performance", "active"),
-            Student("4", "Bruno Martins", "bruno@agego.com", "Base", "inactive")
+            Student("1", "Marina Alves", "marina@agego.com", "+55 11 90000-0101", "Performance", "Performance", "active"),
+            Student("2", "Rafael Souza", "rafael@agego.com", "+55 11 90000-0102", "Essencial", "Essencial", "pending_payment"),
+            Student("3", "Camila Lima", "camila@agego.com", "+55 11 90000-0103", "Performance", "Performance", "active"),
+            Student("4", "Bruno Martins", "bruno@agego.com", "+55 11 90000-0104", "Base", "Base", "inactive")
         ),
         workouts = listOf(
             Workout("1", "Intervalado 5 km", "Séries de velocidade e recuperação", "directions_run", "active"),
