@@ -39,6 +39,33 @@ Plataforma mobile com dois perfis distintos (Instrutor e Aluno), permitindo cria
 - **Backend:** Node.js
 - **Banco de Dados:** Supabase (PostgreSQL)
 
+## Banco Supabase Atual
+
+O arquivo principal atualizado agora e `app/sampledata/banco.txt`.
+Ele tambem existe como migracao em:
+
+`supabase/migrations/202606170001_agego_full_schema.sql`
+
+Esse script cria:
+
+- Tabelas de gestao: usuarios, instrutores, alunos, planos, treinos, atividades, grupos, membros de grupo, eventos, presencas, comunicados e notificacoes.
+- Tabelas de comunidade: posts, destinos por grupo/aluno/evento, midias, enquetes, votos, curtidas, comentarios e curtidas de comentarios.
+- RPC `get_instructor_students()` para o app carregar alunos do instrutor.
+- RPC `set_group_members(group_id, student_ids)` para salvar a selecao de pessoas de um grupo em lote.
+- Buckets privados separados:
+  - `agego-social-posts` para imagens, GIFs e videos da rede social.
+  - `agego-management` para arquivos de gestao, documentos, anexos de alunos, eventos e treinos.
+
+Para aplicar direto no Supabase pelo terminal:
+
+```powershell
+npm install
+$env:SUPABASE_DB_URL="postgresql://postgres:SENHA_REAL@db.upjhdumsfikxsdswesnd.supabase.co:5432/postgres"
+npm run supabase:apply
+```
+
+Nao salve a senha real no repositorio.
+
 ---
 
 *Versão do documento: 1.0 — Baseado no arquivo Section_1.pdf (briefing inicial do projeto)*

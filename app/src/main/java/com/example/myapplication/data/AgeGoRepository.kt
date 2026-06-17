@@ -1,30 +1,176 @@
 package com.example.myapplication.data
 
+import android.util.Log
 import com.example.myapplication.BuildConfig
-import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.auth.Auth
-import io.github.jan.supabase.auth.auth
-import io.github.jan.supabase.createSupabaseClient
-import io.github.jan.supabase.postgrest.Postgrest
-import io.github.jan.supabase.postgrest.from
-import io.github.jan.supabase.postgrest.postgrest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
 
 interface AgeGoRepository {
     suspend fun loadDashboard(): DashboardData
+    suspend fun saveStudent(student: Student): Student
+    suspend fun deleteStudent(studentId: String)
+    suspend fun saveWorkout(workout: Workout): Workout
+    suspend fun deleteWorkout(workoutId: String)
+    suspend fun saveGroup(group: DirectoryItem): DirectoryItem
+    suspend fun deleteGroup(groupId: String)
+    suspend fun saveRoutine(routine: DirectoryItem): DirectoryItem
+    suspend fun deleteRoutine(routineId: String)
+    suspend fun saveEvent(event: Event): Event
+    suspend fun deleteEvent(eventId: String)
+    suspend fun saveCommunityPost(post: CommunityPost): CommunityPost
+    suspend fun toggleCommunityLike(postId: String)
+    suspend fun addCommunityComment(postId: String, content: String, parentCommentId: String? = null)
+    suspend fun toggleCommunityCommentLike(commentId: String)
+    suspend fun shareCommunityPost(postId: String)
 }
 
-class SupabaseAgeGoRepository(
-    private val client: SupabaseClient
+class ApiAgeGoRepository(
+    private val baseUrl: String
 ) : AgeGoRepository {
-    override suspend fun loadDashboard(): DashboardData {
-
-
-        val students = client.postgrest.rpc("get_instructor_students").decodeList<Student>()
-        val workouts = client.from("workouts").select().decodeList<Workout>()
-        val announcements = client.from("announcements").select().decodeList<Announcement>()
-        val events = client.from("events").select().decodeList<Event>()
-        return DashboardData(students, workouts, announcements, events, isDemo = false)
+    private val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
     }
+
+    override suspend fun loadDashboard(): DashboardData =
+        request("GET", "/dashboard")
+
+    override suspend fun saveStudent(student: Student): Student {
+        val response: StudentResponse = if (student.id.isBlank()) {
+            request("POST", "/students", student.toPayload())
+        } else {
+            request("PUT", "/students/${student.id}", student.toPayload())
+        }
+        return response.student?.let {
+            student.copy(id = it.id.ifBlank { student.id })
+        } ?: student
+    }
+
+    override suspend fun deleteStudent(studentId: String) {
+        requestUnit("DELETE", "/students/$studentId")
+    }
+
+    override suspend fun saveWorkout(workout: Workout): Workout {
+        val response: WorkoutResponse = if (workout.id.isBlank()) {
+            request("POST", "/workouts", workout.toPayload())
+        } else {
+            request("PUT", "/workouts/${workout.id}", workout.toPayload())
+        }
+        return response.workout ?: workout
+    }
+
+    override suspend fun deleteWorkout(workoutId: String) {
+        requestUnit("DELETE", "/workouts/$workoutId")
+    }
+
+    override suspend fun saveGroup(group: DirectoryItem): DirectoryItem {
+        val response: DirectoryResponse = if (group.id.isBlank()) {
+            request("POST", "/groups", group.toPayload())
+        } else {
+            request("PUT", "/groups/${group.id}", group.toPayload())
+        }
+        return response.group ?: group
+    }
+
+    override suspend fun deleteGroup(groupId: String) {
+        requestUnit("DELETE", "/groups/$groupId")
+    }
+
+    override suspend fun saveRoutine(routine: DirectoryItem): DirectoryItem {
+        val response: DirectoryResponse = if (routine.id.isBlank()) {
+            request("POST", "/routines", routine.toPayload())
+        } else {
+            request("PUT", "/routines/${routine.id}", routine.toPayload())
+        }
+        return response.routine ?: routine
+    }
+
+    override suspend fun deleteRoutine(routineId: String) {
+        requestUnit("DELETE", "/routines/$routineId")
+    }
+
+    override suspend fun saveEvent(event: Event): Event {
+        val response: EventResponse = if (event.id.isBlank()) {
+            request("POST", "/events", event.toPayload())
+        } else {
+            request("PUT", "/events/${event.id}", event.toPayload())
+        }
+        return response.event ?: event
+    }
+
+    override suspend fun deleteEvent(eventId: String) {
+        requestUnit("DELETE", "/events/$eventId")
+    }
+
+    override suspend fun saveCommunityPost(post: CommunityPost): CommunityPost {
+        val response: PostResponse = request("POST", "/posts", post.toPayload())
+        return response.post ?: post
+    }
+
+    override suspend fun toggleCommunityLike(postId: String) {
+        requestUnit("POST", "/posts/$postId/like")
+    }
+
+    override suspend fun addCommunityComment(postId: String, content: String, parentCommentId: String?) {
+        requestUnit("POST", "/posts/$postId/comments", CommentPayload(content, parentCommentId))
+    }
+
+    override suspend fun toggleCommunityCommentLike(commentId: String) {
+        requestUnit("POST", "/comments/$commentId/like")
+    }
+
+    override suspend fun shareCommunityPost(postId: String) {
+        requestUnit("POST", "/posts/$postId/share")
+    }
+
+    private suspend inline fun <reified T> request(method: String, path: String): T =
+        json.decodeFromString(execute(method, path, body = null))
+
+    private suspend inline fun <reified T, reified B> request(method: String, path: String, body: B): T =
+        json.decodeFromString(execute(method, path, json.encodeToString(body)))
+
+    private suspend fun requestUnit(method: String, path: String) {
+        execute(method, path, body = null)
+    }
+
+    private suspend inline fun <reified B> requestUnit(method: String, path: String, body: B) {
+        execute(method, path, json.encodeToString(body))
+    }
+
+    private suspend fun execute(method: String, path: String, body: String?): String =
+        withContext(Dispatchers.IO) {
+            val connection = (URL("${baseUrl.trimEnd('/')}$path").openConnection() as HttpURLConnection).apply {
+                requestMethod = method
+                connectTimeout = 12_000
+                readTimeout = 20_000
+                setRequestProperty("Accept", "application/json")
+                if (body != null) {
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                }
+            }
+
+            if (body != null) {
+                OutputStreamWriter(connection.outputStream).use { it.write(body) }
+            }
+
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            connection.disconnect()
+
+        if (code !in 200..299) {
+                Log.e("AgeGoApi", "$method $path failed HTTP $code: $text")
+                throw IllegalStateException(text.ifBlank { "HTTP $code" })
+            }
+            text.ifBlank { "{}" }
+        }
 }
 
 class DemoAgeGoRepository(
@@ -38,24 +184,50 @@ class DemoAgeGoRepository(
             Student("4", "Bruno Martins", "bruno@agego.com", "+55 11 90000-0104", "Base", "Base", "inactive")
         ),
         workouts = listOf(
-            Workout("1", "Intervalado 5 km", "Séries de velocidade e recuperação", "directions_run", "active"),
-            Workout("2", "Longão progressivo", "Aumento gradual de ritmo", "route", "active"),
-            Workout("3", "Força para corrida", "Mobilidade e estabilidade", "fitness_center", "draft")
+            Workout("1", "Intervalado 5 km", "Series de velocidade e recuperacao", "directions_run", "active"),
+            Workout("2", "Longao progressivo", "Aumento gradual de ritmo", "route", "active"),
+            Workout("3", "Forca para corrida", "Mobilidade e estabilidade", "fitness_center", "draft")
         ),
         announcements = listOf(
-            Announcement("1", "Treino de sábado confirmado às 6h30 no parque.", "Hoje, 09:10"),
+            Announcement("1", "Treino de sabado confirmado as 6h30 no parque.", "Hoje, 09:10"),
             Announcement("2", "Lembrem de atualizar o resultado do treino semanal.", "Ontem, 18:40", "group")
         ),
         events = listOf(
             Event("1", "Treino coletivo", "Rodagem leve em grupo", demoDate(0, 6, 30), "Parque Central"),
-            Event("2", "Avaliação de pace", "Teste de 5 km", demoDate(0, 18, 0), "Pista Municipal"),
-            Event("3", "Longão da assessoria", "Percurso de 12 km", demoDate(1, 6, 0), "Praça das Águas"),
-            Event("4", "Mobilidade", "Sessão orientada", demoDate(3, 19, 0), "Studio AgeGo")
+            Event("2", "Avaliacao de pace", "Teste de 5 km", demoDate(0, 18, 0), "Pista Municipal")
         ),
+        groups = listOf(
+            DirectoryItem("iniciante", "Iniciantes", "active", "Grupo para alunos em fase inicial."),
+            DirectoryItem("performance", "Performance", "active", "Treinos focados em evolucao de pace.")
+        ),
+        routines = listOf(
+            DirectoryItem("corrida", "Corrida", "active", "Treinos de rua, pista e provas."),
+            DirectoryItem("fortalecimento", "Fortalecimento", "active", "Base de forca, mobilidade e estabilidade.")
+        ),
+        communityPosts = demoCommunityPosts(emptyList()),
         isDemo = true,
-        message = reason ?: "Modo demonstração. Configure o Supabase e faça login para carregar dados reais."
+        message = reason ?: "Modo demonstracao. Inicie a API local para carregar dados reais."
     )
+
+    override suspend fun saveStudent(student: Student) = student.withId()
+    override suspend fun deleteStudent(studentId: String) = Unit
+    override suspend fun saveWorkout(workout: Workout) = workout.copy(id = workout.id.ifBlank { java.util.UUID.randomUUID().toString() })
+    override suspend fun deleteWorkout(workoutId: String) = Unit
+    override suspend fun saveGroup(group: DirectoryItem) = group.withId()
+    override suspend fun deleteGroup(groupId: String) = Unit
+    override suspend fun saveRoutine(routine: DirectoryItem) = routine.withId()
+    override suspend fun deleteRoutine(routineId: String) = Unit
+    override suspend fun saveEvent(event: Event) = event.copy(id = event.id.ifBlank { java.util.UUID.randomUUID().toString() })
+    override suspend fun deleteEvent(eventId: String) = Unit
+    override suspend fun saveCommunityPost(post: CommunityPost) = post.copy(id = post.id.ifBlank { java.util.UUID.randomUUID().toString() })
+    override suspend fun toggleCommunityLike(postId: String) = Unit
+    override suspend fun addCommunityComment(postId: String, content: String, parentCommentId: String?) = Unit
+    override suspend fun toggleCommunityCommentLike(commentId: String) = Unit
+    override suspend fun shareCommunityPost(postId: String) = Unit
 }
+
+private fun Student.withId() = copy(id = id.ifBlank { java.util.UUID.randomUUID().toString() })
+private fun DirectoryItem.withId() = copy(id = id.ifBlank { java.util.UUID.randomUUID().toString() })
 
 private fun demoDate(daysFromToday: Int, hour: Int, minute: Int): String {
     val calendar = java.util.Calendar.getInstance().apply {
@@ -67,25 +239,145 @@ private fun demoDate(daysFromToday: Int, hour: Int, minute: Int): String {
 }
 
 object RepositoryProvider {
-    fun create(): AgeGoRepository {
-        if (BuildConfig.SUPABASE_URL.isBlank() || BuildConfig.SUPABASE_ANON_KEY.isBlank()) {
-            return DemoAgeGoRepository()
-        }
-
-        val client = createSupabaseClient(BuildConfig.SUPABASE_URL, BuildConfig.SUPABASE_ANON_KEY) {
-            install(Auth)
-            install(Postgrest)
-        }
-        return FallbackRepository(SupabaseAgeGoRepository(client))
-    }
+    fun create(): AgeGoRepository =
+        FallbackRepository(ApiAgeGoRepository(BuildConfig.AGEGO_API_URL))
 }
 
 private class FallbackRepository(
     private val remote: AgeGoRepository
 ) : AgeGoRepository {
+    private var demo: DemoAgeGoRepository? = null
+
     override suspend fun loadDashboard(): DashboardData = runCatching {
         remote.loadDashboard()
     }.getOrElse { error ->
-        DemoAgeGoRepository(error.message).loadDashboard()
+        Log.e("AgeGoApi", "dashboard fallback: ${error.message}", error)
+        DemoAgeGoRepository(error.message).also { demo = it }.loadDashboard()
+    }
+
+    override suspend fun saveStudent(student: Student) = runRemoteOrDemo { saveStudent(student) }
+    override suspend fun deleteStudent(studentId: String) = runRemoteOrDemoUnit { deleteStudent(studentId) }
+    override suspend fun saveWorkout(workout: Workout) = runRemoteOrDemo { saveWorkout(workout) }
+    override suspend fun deleteWorkout(workoutId: String) = runRemoteOrDemoUnit { deleteWorkout(workoutId) }
+    override suspend fun saveGroup(group: DirectoryItem) = runRemoteOrDemo { saveGroup(group) }
+    override suspend fun deleteGroup(groupId: String) = runRemoteOrDemoUnit { deleteGroup(groupId) }
+    override suspend fun saveRoutine(routine: DirectoryItem) = runRemoteOrDemo { saveRoutine(routine) }
+    override suspend fun deleteRoutine(routineId: String) = runRemoteOrDemoUnit { deleteRoutine(routineId) }
+    override suspend fun saveEvent(event: Event) = runRemoteOrDemo { saveEvent(event) }
+    override suspend fun deleteEvent(eventId: String) = runRemoteOrDemoUnit { deleteEvent(eventId) }
+    override suspend fun saveCommunityPost(post: CommunityPost) = runRemoteOrDemo { saveCommunityPost(post) }
+    override suspend fun toggleCommunityLike(postId: String) = runRemoteOrDemoUnit { toggleCommunityLike(postId) }
+    override suspend fun addCommunityComment(postId: String, content: String, parentCommentId: String?) =
+        runRemoteOrDemoUnit { addCommunityComment(postId, content, parentCommentId) }
+    override suspend fun toggleCommunityCommentLike(commentId: String) = runRemoteOrDemoUnit { toggleCommunityCommentLike(commentId) }
+    override suspend fun shareCommunityPost(postId: String) = runRemoteOrDemoUnit { shareCommunityPost(postId) }
+
+    private suspend fun <T> runRemoteOrDemo(block: suspend AgeGoRepository.() -> T): T =
+        runCatching { remote.block() }.getOrElse {
+            (demo ?: DemoAgeGoRepository(it.message).also { repo -> demo = repo }).block()
+        }
+
+    private suspend fun runRemoteOrDemoUnit(block: suspend AgeGoRepository.() -> Unit) {
+        runCatching { remote.block() }.getOrElse {
+            (demo ?: DemoAgeGoRepository(it.message).also { repo -> demo = repo }).block()
+        }
     }
 }
+
+@Serializable
+private data class StudentPayload(
+    val name: String,
+    val email: String,
+    val phone: String,
+    val routine: String,
+    val status: String
+)
+
+@Serializable
+private data class WorkoutPayload(
+    val name: String,
+    val description: String,
+    val iconName: String,
+    val status: String
+)
+
+@Serializable
+private data class DirectoryPayload(
+    val name: String,
+    val description: String,
+    val status: String,
+    val studentIds: List<String> = emptyList()
+)
+
+@Serializable
+private data class EventPayload(
+    val name: String,
+    val description: String,
+    val eventDate: String,
+    val location: String
+)
+
+@Serializable
+private data class PostPayload(
+    val type: String,
+    val title: String,
+    val content: String,
+    val target: String,
+    val linkedWorkoutId: String?,
+    val pollOptions: List<String>,
+    val mediaLabel: String?,
+    val gifLabel: String?,
+    val generatedImagePrompt: String?,
+    val scheduledAt: String?,
+    val location: String?,
+    val contentWarning: String?
+)
+
+@Serializable
+private data class CommentPayload(
+    val content: String,
+    val parentCommentId: String? = null
+)
+
+@Serializable private data class StudentResponse(val student: Student? = null)
+@Serializable private data class WorkoutResponse(val workout: Workout? = null)
+@Serializable private data class DirectoryResponse(val group: DirectoryItem? = null, val routine: DirectoryItem? = null)
+@Serializable private data class EventResponse(val event: Event? = null)
+@Serializable private data class PostResponse(val post: CommunityPost? = null)
+
+private fun Student.toPayload() = StudentPayload(name, email, phone, routine, status)
+private fun Workout.toPayload() = WorkoutPayload(name, description.orEmpty(), iconName ?: "directions_run", status)
+private fun DirectoryItem.toPayload() = DirectoryPayload(name, description, status, studentIds)
+private fun Event.toPayload() = EventPayload(name, description.orEmpty(), eventDate, location.orEmpty())
+private fun CommunityPost.toPayload() = PostPayload(
+    type = type.name.lowercase(),
+    title = title,
+    content = content,
+    target = target,
+    linkedWorkoutId = linkedWorkoutId,
+    pollOptions = pollOptions,
+    mediaLabel = mediaLabel,
+    gifLabel = gifLabel,
+    generatedImagePrompt = generatedImagePrompt,
+    scheduledAt = scheduledAt,
+    location = location,
+    contentWarning = contentWarning
+)
+
+private fun demoCommunityPosts(workouts: List<Workout>): List<CommunityPost> = listOf(
+    CommunityPost(
+        id = "post-1",
+        type = CommunityPostType.POST,
+        title = "Recado do treino",
+        content = "Amanha teremos rodagem leve. Hidratem bem e cheguem 10 minutos antes.",
+        target = "groups",
+        authorName = "Marina Alves",
+        commentThreads = listOf(
+            CommunityComment("comment-1", "Rafael Souza", "Confirmado, prof!"),
+            CommunityComment("comment-2", "Camila Lima", "Vou chegar mais cedo para aquecer.")
+        ),
+        likes = 12,
+        comments = 3,
+        shares = 1
+    )
+)

@@ -255,6 +255,277 @@ fun GroupsScreen(
     )
 }
 
+data class RoutineDayDraft(
+    val number: Int,
+    val workoutIds: List<String> = emptyList(),
+    val restDaysAfter: Int = 1
+)
+
+@Composable
+fun RoutineBuilderScreen(
+    routine: DirectoryEntry?,
+    workouts: List<Workout>,
+    onBack: () -> Unit,
+    onSave: (DirectoryEntry) -> Unit,
+    onDelete: ((String) -> Unit)?
+) {
+    var step by remember(routine?.id) { mutableStateOf(if (routine == null) 0 else 1) }
+    var name by remember(routine?.id) { mutableStateOf(routine?.name.orEmpty()) }
+    var price by remember(routine?.id) { mutableStateOf(extractRoutinePrice(routine?.description.orEmpty())) }
+    var days by remember(routine?.id) {
+        mutableStateOf(
+            listOf(
+                RoutineDayDraft(1, workoutIds = workouts.firstOrNull()?.id?.let { listOf(it) } ?: emptyList())
+            )
+        )
+    }
+
+    BackHandler { if (step > 0) step-- else onBack() }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PurpleBackground)
+    ) {
+        WorkoutFlowHeader(
+            breadcrumb = when (step) {
+                0 -> "Rotinas"
+                1 -> "Dias de treino"
+                else -> "Resumo da rotina"
+            },
+            title = when (step) {
+                0 -> if (routine == null) "Adicionar nova rotina" else "Editar rotina"
+                1 -> "Construtor de rotina"
+                else -> "Rotina construida"
+            },
+            onBack = { if (step > 0) step-- else onBack() },
+            readyLabel = if (step == 1) "Resumo" else null,
+            onReady = if (step == 1) ({ step = 2 }) else null
+        )
+
+        if (step != 1) Spacer(Modifier.weight(1f))
+
+        WorkoutBottomPanel(expanded = step == 1) {
+            when (step) {
+                0 -> {
+                    WorkoutNameStep(name = name, onNameChange = { name = it }, placeholder = "Nome da rotina")
+                    WorkoutNextButton(enabled = name.isNotBlank()) { step = 1 }
+                }
+                1 -> {
+                    RoutineDaysStep(
+                        days = days,
+                        workouts = workouts,
+                        onDaysChange = { days = it }
+                    )
+                }
+                else -> {
+                    RoutineSummaryStep(
+                        name = name,
+                        price = price,
+                        onPriceChange = { price = it },
+                        days = days,
+                        workouts = workouts,
+                        onSave = {
+                            onSave(
+                                DirectoryEntry(
+                                    id = routine?.id.orEmpty(),
+                                    name = name.trim(),
+                                    status = "active",
+                                    description = routineDescriptionSummary(price, days, workouts)
+                                )
+                            )
+                            onBack()
+                        },
+                        onDelete = if (routine != null && onDelete != null) ({ onDelete(routine.id) }) else null
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RoutineDaysStep(
+    days: List<RoutineDayDraft>,
+    workouts: List<Workout>,
+    onDaysChange: (List<RoutineDayDraft>) -> Unit
+) {
+    var selectedDay by remember(days.size) { mutableStateOf(days.firstOrNull()?.number ?: 1) }
+    var workoutQuery by remember { mutableStateOf("") }
+    val activeDay = days.firstOrNull { it.number == selectedDay } ?: days.first()
+    val filteredWorkouts = workouts.filter { workout ->
+        workout.name.contains(workoutQuery, true) ||
+            workout.description.orEmpty().contains(workoutQuery, true) ||
+            workout.status.contains(workoutQuery, true)
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 96.dp)
+    ) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                days.forEach { day ->
+                    SlimFilterBadge(
+                        modifier = Modifier.weight(1f),
+                        label = "Dia ${day.number}",
+                        selected = selectedDay == day.number,
+                        onClick = { selectedDay = day.number }
+                    )
+                }
+            }
+        }
+        item {
+            RoutineRestPicker(
+                restDays = activeDay.restDaysAfter,
+                onChange = { next ->
+                    onDaysChange(days.map { if (it.number == activeDay.number) it.copy(restDaysAfter = next) else it })
+                }
+            )
+        }
+        item {
+            Text("Treinos do dia", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
+        if (workouts.isNotEmpty()) {
+            item {
+                StudentSearchBar(
+                    value = workoutQuery,
+                    onValueChange = { workoutQuery = it },
+                    placeholder = "Pesquisar treino",
+                    modifier = Modifier.shadow(14.dp, RoundedCornerShape(50)).imePadding()
+                )
+            }
+        }
+        if (workouts.isEmpty()) {
+            item { EmptyRoutineBuilderState("Crie treinos antes de montar uma rotina.") }
+        } else {
+            items(filteredWorkouts) { workout ->
+                val selected = workout.id in activeDay.workoutIds
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        val nextIds = if (selected) {
+                            activeDay.workoutIds - workout.id
+                        } else {
+                            activeDay.workoutIds + workout.id
+                        }
+                        onDaysChange(days.map { if (it.number == activeDay.number) it.copy(workoutIds = nextIds) else it })
+                    },
+                    color = if (selected) Lime.copy(alpha = .18f) else PurpleBackground,
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier.size(24.dp).clip(CircleShape).background(if (selected) Lime else PurpleSurface),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (selected) Icon(Icons.Outlined.Check, null, tint = PurpleDeep, modifier = Modifier.size(15.dp))
+                        }
+                        Column(Modifier.padding(start = 10.dp).weight(1f)) {
+                            Text(workout.name, color = Color.White, fontWeight = FontWeight.SemiBold)
+                            Text(workout.description.orEmpty().ifBlank { workoutStatusLabel(workout.status) }, color = Color.White.copy(alpha = .58f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Button(
+                onClick = {
+                    val nextNumber = (days.maxOfOrNull { it.number } ?: 0) + 1
+                    onDaysChange(days + RoutineDayDraft(nextNumber))
+                    selectedDay = nextNumber
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep)
+            ) {
+                Icon(Icons.Outlined.Add, null)
+                Text("Adicionar dia", Modifier.padding(start = 8.dp), fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun RoutineRestPicker(restDays: Int, onChange: (Int) -> Unit) {
+    Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Descanso apos este dia", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(0, 1, 2, 3).forEach { option ->
+                    SlimFilterBadge(
+                        modifier = Modifier.weight(1f),
+                        label = if (option == 0) "Sem" else "${option}d",
+                        selected = restDays == option,
+                        onClick = { onChange(option) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RoutineSummaryStep(
+    name: String,
+    price: String,
+    onPriceChange: (String) -> Unit,
+    days: List<RoutineDayDraft>,
+    workouts: List<Workout>,
+    onSave: () -> Unit,
+    onDelete: (() -> Unit)?
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        FormTextField(price, { next -> onPriceChange(next.filter { it.isDigit() || it == ',' || it == '.' }) }, "Valor geral da rotina")
+        Surface(color = PurpleBackground, shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(name.ifBlank { "Rotina" }, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text("${days.size} dias de treino", color = Lime, fontWeight = FontWeight.SemiBold)
+                days.forEach { day ->
+                    val names = day.workoutIds.mapNotNull { id -> workouts.firstOrNull { it.id == id }?.name }
+                    Text(
+                        "Dia ${day.number}: ${names.joinToString().ifBlank { "sem treinos" }} | descanso ${day.restDaysAfter}d",
+                        color = Color.White.copy(alpha = .78f),
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        }
+        SaveButton(enabled = name.isNotBlank()) { onSave() }
+        if (onDelete != null) {
+            TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+                Text("Excluir rotina", color = Color.White.copy(alpha = .62f))
+            }
+        }
+    }
+}
+
+@Composable
+fun EmptyRoutineBuilderState(message: String) {
+    Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
+        Text(message, Modifier.fillMaxWidth().padding(16.dp), color = Color.White.copy(alpha = .72f))
+    }
+}
+
+fun routineDescriptionSummary(price: String, days: List<RoutineDayDraft>, workouts: List<Workout>): String {
+    val lines = mutableListOf<String>()
+    if (price.isNotBlank()) lines += "Valor: R$ $price"
+    lines += "${days.size} dias de treino"
+    days.forEach { day ->
+        val names = day.workoutIds.mapNotNull { id -> workouts.firstOrNull { it.id == id }?.name }
+        lines += "Dia ${day.number}: ${names.joinToString().ifBlank { "sem treinos" }} | descanso ${day.restDaysAfter}d"
+    }
+    return lines.joinToString("\n")
+}
+
+fun extractRoutinePrice(description: String): String =
+    description.lineSequence()
+        .firstOrNull { it.startsWith("Valor: R$") }
+        ?.substringAfter("Valor: R$")
+        ?.trim()
+        .orEmpty()
+
 @Composable
 fun StudentFormScreen(
     student: Student?,
@@ -480,12 +751,12 @@ fun WorkoutBottomPanel(expanded: Boolean = false, content: @Composable ColumnSco
 }
 
 @Composable
-fun WorkoutNameStep(name: String, onNameChange: (String) -> Unit) {
+fun WorkoutNameStep(name: String, onNameChange: (String) -> Unit, placeholder: String = "Nome do treino") {
     TextField(
         value = name,
         onValueChange = onNameChange,
         modifier = Modifier.fillMaxWidth().height(58.dp),
-        placeholder = { Text("Nome do treino", color = Color.White.copy(alpha = .60f)) },
+        placeholder = { Text(placeholder, color = Color.White.copy(alpha = .60f)) },
         singleLine = true,
         shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
         colors = TextFieldDefaults.colors(

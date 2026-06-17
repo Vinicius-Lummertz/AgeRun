@@ -240,39 +240,30 @@ fun EventsScreen(
     onNewEvent: () -> Unit,
     onEventClick: (Event) -> Unit
 ) {
-    Scaffold(
-        containerColor = PurpleBackground,
-        topBar = {
-            TopAppBar(
-                title = { Text("Eventos", fontWeight = FontWeight.Bold) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar") } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = PurpleBackground)
-            )
+    var filter by remember { mutableStateOf("Todos") }
+    DirectoryScreen(
+        title = "Eventos",
+        searchPlaceholder = "Pesquisar evento",
+        filters = listOf("Todos", "Proximos", "Sem local"),
+        selectedFilter = filter,
+        onFilterSelected = { filter = it },
+        actions = listOf(DirectoryAction("Novo evento", R.drawable.ic_events, onNewEvent)),
+        items = events.sortedBy { it.eventDate },
+        loading = loading,
+        itemTitle = { it.name },
+        itemStatus = { event ->
+            when {
+                event.location.isNullOrBlank() -> "Sem local"
+                else -> "Proximos"
+            }
         },
-        floatingActionButton = {
-            FloatingActionButton(onClick = onNewEvent, containerColor = Lime, contentColor = PurpleDeep) {
-                Icon(Icons.Outlined.Add, "Criar evento")
-            }
-        }
-    ) { padding ->
-        LazyColumn(
-            Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 110.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item { Text("Agenda de eventos", fontWeight = FontWeight.Bold, fontSize = 18.sp) }
-            if (loading) item { LoadingBox() }
-            if (events.isEmpty() && !loading) {
-                item {
-                    Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
-                        Text("Nenhum evento cadastrado.", Modifier.fillMaxWidth().padding(18.dp))
-                    }
-                }
-            }
-            items(events.sortedBy { it.eventDate }) { event ->
-                Box(Modifier.clickable { onEventClick(event) }) { EventCard(event) }
-            }
-        }
-    }
+        itemMatchesQuery = { event, query ->
+            event.name.contains(query, true) ||
+                event.description.orEmpty().contains(query, true) ||
+                event.location.orEmpty().contains(query, true)
+        },
+        onBack = onBack,
+        onItemClick = onEventClick
+    )
 }
 

@@ -1,11 +1,15 @@
 ﻿package com.example.myapplication
 
+import android.net.Uri
 import android.os.Bundle
+import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -135,6 +139,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -181,6 +186,10 @@ fun CommunityPostFormScreen(
     var contentWarning by remember { mutableStateOf("") }
     var activeComposerPanel by remember { mutableStateOf<String?>(null) }
     var selectedWorkoutId by remember { mutableStateOf(workouts.firstOrNull()?.id) }
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        mediaLabel = uri?.toString()
+        if (uri != null) activeComposerPanel = null
+    }
 
     SimpleFormScaffold(title = if (target == "events") "Publicar em eventos" else "Publicar em grupos", onBack = onBack) {
         item {
@@ -194,7 +203,7 @@ fun CommunityPostFormScreen(
                 Column(Modifier.padding(start = 12.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     FormTextField(content, { content = it }, "O que esta acontecendo?")
                     CommunityComposerToolbar(
-                        onMedia = { activeComposerPanel = if (activeComposerPanel == "media") null else "media" },
+                        onMedia = { galleryLauncher.launch("image/*") },
                         onGif = { activeComposerPanel = if (activeComposerPanel == "gif") null else "gif" },
                         onGenerate = { activeComposerPanel = if (activeComposerPanel == "generate") null else "generate" },
                         onPoll = {
@@ -227,7 +236,8 @@ fun CommunityPostFormScreen(
                     generatedImagePrompt = generatedImagePrompt,
                     scheduledAt = scheduledAt,
                     location = location,
-                    contentWarning = contentWarning
+                    contentWarning = contentWarning,
+                    onRemoveMedia = { mediaLabel = null }
                 )
             }
         }
@@ -337,15 +347,44 @@ fun CommunityComposerPreview(
     generatedImagePrompt: String,
     scheduledAt: String,
     location: String,
-    contentWarning: String
+    contentWarning: String,
+    onRemoveMedia: () -> Unit = {}
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        mediaLabel?.let { ComposerPreviewChip(Icons.Outlined.Image, it) }
+        mediaLabel?.let {
+            if (isGalleryMediaUri(it)) {
+                ComposerImagePreview(uri = it, onRemove = onRemoveMedia)
+            } else {
+                ComposerPreviewChip(Icons.Outlined.Image, it)
+            }
+        }
         gifLabel?.let { ComposerPreviewChip(Icons.Outlined.GifBox, it) }
         if (generatedImagePrompt.isNotBlank()) ComposerPreviewChip(Icons.Outlined.AutoAwesome, "Gerar: $generatedImagePrompt")
         if (scheduledAt.isNotBlank()) ComposerPreviewChip(Icons.Outlined.Schedule, "Agendado: $scheduledAt")
         if (location.isNotBlank()) ComposerPreviewChip(Icons.Outlined.LocationOn, location)
         if (contentWarning.isNotBlank()) ComposerPreviewChip(Icons.Outlined.Flag, contentWarning)
+    }
+}
+
+@Composable
+fun ComposerImagePreview(uri: String, onRemove: () -> Unit) {
+    Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            GalleryImage(
+                uri = uri,
+                modifier = Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(14.dp))
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Outlined.Image, null, tint = Lime, modifier = Modifier.size(18.dp))
+                Text("Foto selecionada da galeria", Modifier.padding(start = 8.dp).weight(1f), color = Color.White.copy(alpha = .82f), fontSize = 13.sp)
+                TextButton(onClick = onRemove, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text("Remover", color = Lime, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
     }
 }
 
@@ -437,6 +476,25 @@ fun ComposerChoiceGrid(options: List<String>, selected: String?, onSelect: (Stri
         }
     }
 }
+
+@Composable
+fun GalleryImage(uri: String, modifier: Modifier = Modifier) {
+    AndroidView(
+        modifier = modifier.background(PurpleBackground),
+        factory = { context ->
+            ImageView(context).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                adjustViewBounds = true
+            }
+        },
+        update = { imageView ->
+            imageView.setImageURI(Uri.parse(uri))
+        }
+    )
+}
+
+fun isGalleryMediaUri(value: String): Boolean =
+    value.startsWith("content://") || value.startsWith("file://")
 
 @Composable
 fun PostTypeChip(label: String, selected: Boolean, onClick: () -> Unit) {

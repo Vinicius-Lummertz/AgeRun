@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "supabase:apply": "node tools/apply-supabase-sql.mjs",
+    "supabase:check": "node tools/check-supabase-schema.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

@@ -146,6 +146,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.myapplication.data.Announcement
 import com.example.myapplication.data.CommunityPost
 import com.example.myapplication.data.CommunityPostType
+import com.example.myapplication.data.DirectoryItem
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.Workout
 import com.example.myapplication.data.Event
@@ -169,12 +170,7 @@ data class Destination(
     val activeIconRes: Int
 )
 
-data class DirectoryEntry(
-    val id: String,
-    val name: String,
-    val status: String,
-    val description: String
-)
+typealias DirectoryEntry = DirectoryItem
 
 data class DirectoryAction(
     val label: String,
@@ -205,8 +201,6 @@ val demoGroups = listOf(
 fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val navController = rememberNavController()
-    val routines = remember { mutableStateListOf<DirectoryEntry>().apply { addAll(demoModalities) } }
-    val groups = remember { mutableStateListOf<DirectoryEntry>().apply { addAll(demoGroups) } }
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     val showBottomBar = destinations.any { it.route == currentRoute }
@@ -236,9 +230,9 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                     loading = state.isLoading,
                     onBack = navController::popBackStack,
                     onCreatePost = { target -> navController.navigate("community/new/$target") },
-                    onPostClick = { post -> navController.navigate("community/post/${post.id}") },
+                    onPostClick = { post -> navController.navigate("community/post/${post.id}/false") },
                     onLike = viewModel::toggleCommunityLike,
-                    onComment = viewModel::addCommunityComment,
+                    onComment = { postId -> navController.navigate("community/post/$postId/true") },
                     onShare = viewModel::shareCommunityPost
                 )
             }
@@ -253,7 +247,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
             }
             composable("modalities") {
                 RoutinesScreen(
-                    routines = routines,
+                    routines = state.routines,
                     onBack = navController::popBackStack,
                     onGroupsClick = { navController.navigate("groups") },
                     onNewRoutine = { navController.navigate("routine/new") },
@@ -262,7 +256,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
             }
             composable("groups") {
                 GroupsScreen(
-                    groups = groups,
+                    groups = state.groups,
                     onBack = navController::popBackStack,
                     onStudentsClick = { navController.navigate("students") },
                     onNewGroup = { navController.navigate("group/new") },
@@ -280,7 +274,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                 )
             }
             composable("student/new") {
-                StudentFormScreen(
+                StudentDetailScreen(
                     student = null,
                     onBack = navController::popBackStack,
                     onSave = {
@@ -292,7 +286,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
             }
             composable("student/{studentId}") { entry ->
                 val student = state.students.firstOrNull { it.id == entry.arguments?.getString("studentId") }
-                StudentFormScreen(
+                StudentDetailScreen(
                     student = student,
                     onBack = navController::popBackStack,
                     onSave = {
@@ -306,66 +300,56 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                 )
             }
             composable("routine/new") {
-                DirectoryFormScreen(
-                    title = "Nova rotina",
-                    entry = null,
-                    nameLabel = "Nome da rotina",
-                    descriptionLabel = "Descricao",
+                RoutineBuilderScreen(
+                    routine = null,
+                    workouts = state.workouts,
                     onBack = navController::popBackStack,
                     onSave = {
-                        routines.add(0, it.copy(id = it.id.ifBlank { java.util.UUID.randomUUID().toString() }))
+                        viewModel.saveRoutine(it)
                         navController.popBackStack()
                     },
                     onDelete = null
                 )
             }
             composable("routine/{routineId}") { entry ->
-                val routine = routines.firstOrNull { it.id == entry.arguments?.getString("routineId") }
-                DirectoryFormScreen(
-                    title = "Editar rotina",
-                    entry = routine,
-                    nameLabel = "Nome da rotina",
-                    descriptionLabel = "Descricao",
+                val routine = state.routines.firstOrNull { it.id == entry.arguments?.getString("routineId") }
+                RoutineBuilderScreen(
+                    routine = routine,
+                    workouts = state.workouts,
                     onBack = navController::popBackStack,
                     onSave = { saved ->
-                        val index = routines.indexOfFirst { it.id == saved.id }
-                        if (index >= 0) routines[index] = saved
+                        viewModel.saveRoutine(saved)
                         navController.popBackStack()
                     },
                     onDelete = { id ->
-                        routines.removeAll { it.id == id }
+                        viewModel.deleteRoutine(id)
                         navController.popBackStack()
                     }
                 )
             }
             composable("group/{groupId}") { entry ->
-                val group = groups.firstOrNull { it.id == entry.arguments?.getString("groupId") }
-                DirectoryFormScreen(
-                    title = "Editar grupo",
-                    entry = group,
-                    nameLabel = "Nome do grupo",
-                    descriptionLabel = "Descricao",
+                val group = state.groups.firstOrNull { it.id == entry.arguments?.getString("groupId") }
+                GroupDetailScreen(
+                    group = group,
+                    students = state.students,
                     onBack = navController::popBackStack,
                     onSave = { saved ->
-                        val index = groups.indexOfFirst { it.id == saved.id }
-                        if (index >= 0) groups[index] = saved
+                        viewModel.saveGroup(saved)
                         navController.popBackStack()
                     },
                     onDelete = { id ->
-                        groups.removeAll { it.id == id }
+                        viewModel.deleteGroup(id)
                         navController.popBackStack()
                     }
                 )
             }
             composable("group/new") {
-                DirectoryFormScreen(
-                    title = "Novo grupo",
-                    entry = null,
-                    nameLabel = "Nome do grupo",
-                    descriptionLabel = "Descricao",
+                GroupDetailScreen(
+                    group = null,
+                    students = state.students,
                     onBack = navController::popBackStack,
                     onSave = {
-                        groups.add(0, it.copy(id = it.id.ifBlank { java.util.UUID.randomUUID().toString() }))
+                        viewModel.saveGroup(it)
                         navController.popBackStack()
                     },
                     onDelete = null
@@ -382,7 +366,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                 )
             }
             composable("workout/new") {
-                WorkoutFormScreen(
+                WorkoutDetailScreen(
                     workout = null,
                     onBack = navController::popBackStack,
                     onSave = {
@@ -393,7 +377,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
             }
             composable("workout/{workoutId}") { entry ->
                 val workout = state.workouts.firstOrNull { it.id == entry.arguments?.getString("workoutId") }
-                WorkoutFormScreen(
+                WorkoutDetailScreen(
                     workout = workout,
                     onBack = navController::popBackStack,
                     onSave = {
@@ -412,9 +396,9 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                     loading = state.isLoading,
                     onBack = navController::popBackStack,
                     onCreatePost = { target -> navController.navigate("community/new/$target") },
-                    onPostClick = { post -> navController.navigate("community/post/${post.id}") },
+                    onPostClick = { post -> navController.navigate("community/post/${post.id}/false") },
                     onLike = viewModel::toggleCommunityLike,
-                    onComment = viewModel::addCommunityComment,
+                    onComment = { postId -> navController.navigate("community/post/$postId/true") },
                     onShare = viewModel::shareCommunityPost
                 )
             }
@@ -430,12 +414,13 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                     }
                 )
             }
-            composable("community/post/{postId}") { entry ->
+            composable("community/post/{postId}/{focusComments}") { entry ->
                 val post = state.communityPosts.firstOrNull { it.id == entry.arguments?.getString("postId") }
                 if (post != null) {
                     CommunityPostDetailScreen(
                         post = post,
                         workoutName = state.workouts.firstOrNull { it.id == post.linkedWorkoutId }?.name,
+                        focusComments = entry.arguments?.getString("focusComments") == "true",
                         onBack = navController::popBackStack,
                         onLike = { viewModel.toggleCommunityLike(post.id) },
                         onComment = { content -> viewModel.addCommunityComment(post.id, content) },
@@ -446,7 +431,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                 }
             }
             composable("event/new") {
-                EventFormScreen(
+                EventDetailScreen(
                     event = null,
                     onBack = navController::popBackStack,
                     onSave = {
@@ -458,7 +443,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
             }
             composable("event/{eventId}") { entry ->
                 val event = state.events.firstOrNull { it.id == entry.arguments?.getString("eventId") }
-                EventFormScreen(
+                EventDetailScreen(
                     event = event,
                     onBack = navController::popBackStack,
                     onSave = {

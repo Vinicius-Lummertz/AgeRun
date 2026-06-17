@@ -40,48 +40,64 @@ data class Event(
     val location: String? = null
 )
 
+@Serializable
 enum class CommunityPostType {
     POST,
     POLL,
     CHALLENGE
 }
 
+@Serializable
 data class CommunityPost(
     val id: String,
     val type: CommunityPostType,
     val title: String = "",
     val content: String,
     val target: String = "groups",
-    val authorName: String = "AgeGo",
-    val linkedWorkoutId: String? = null,
-    val pollOptions: List<String> = emptyList(),
-    val commentThreads: List<CommunityComment> = emptyList(),
-    val mediaLabel: String? = null,
-    val gifLabel: String? = null,
-    val generatedImagePrompt: String? = null,
-    val scheduledAt: String? = null,
+    @SerialName("authorName") val authorName: String = "AgeGo",
+    @SerialName("linkedWorkoutId") val linkedWorkoutId: String? = null,
+    @SerialName("pollOptions") val pollOptions: List<String> = emptyList(),
+    @SerialName("commentThreads") val commentThreads: List<CommunityComment> = emptyList(),
+    @SerialName("mediaLabel") val mediaLabel: String? = null,
+    @SerialName("gifLabel") val gifLabel: String? = null,
+    @SerialName("generatedImagePrompt") val generatedImagePrompt: String? = null,
+    @SerialName("scheduledAt") val scheduledAt: String? = null,
     val location: String? = null,
-    val contentWarning: String? = null,
+    @SerialName("contentWarning") val contentWarning: String? = null,
     val liked: Boolean = false,
     val likes: Int = 0,
     val comments: Int = 0,
     val shares: Int = 0
 )
 
+@Serializable
 data class CommunityComment(
     val id: String,
-    val authorName: String,
+    @SerialName("authorName") val authorName: String,
     val content: String,
     val liked: Boolean = false,
     val likes: Int = 0,
     val replies: List<CommunityComment> = emptyList()
 )
 
+@Serializable
+data class DirectoryItem(
+    val id: String,
+    val name: String,
+    val status: String = "active",
+    val description: String = "",
+    val studentIds: List<String> = emptyList()
+)
+
+@Serializable
 data class DashboardData(
     val students: List<Student>,
     val workouts: List<Workout>,
     val announcements: List<Announcement>,
     val events: List<Event>,
-    val isDemo: Boolean,
+    val groups: List<DirectoryItem> = emptyList(),
+    val routines: List<DirectoryItem> = emptyList(),
+    val communityPosts: List<CommunityPost> = emptyList(),
+    val isDemo: Boolean = false,
     val message: String? = null
 )

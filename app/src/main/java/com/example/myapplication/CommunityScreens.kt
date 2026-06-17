@@ -388,7 +388,16 @@ fun CommunityPostAttachments(post: CommunityPost) {
     if (!hasAttachments) return
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        post.mediaLabel?.let { CommunityAttachmentRow(Icons.Outlined.Image, it) }
+        post.mediaLabel?.let {
+            if (isGalleryMediaUri(it)) {
+                GalleryImage(
+                    uri = it,
+                    modifier = Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(14.dp))
+                )
+            } else {
+                CommunityAttachmentRow(Icons.Outlined.Image, it)
+            }
+        }
         post.gifLabel?.let { CommunityAttachmentRow(Icons.Outlined.GifBox, it) }
         post.generatedImagePrompt?.let { CommunityAttachmentRow(Icons.Outlined.AutoAwesome, "Imagem gerada: $it") }
         post.scheduledAt?.let { CommunityAttachmentRow(Icons.Outlined.Schedule, "Agendado: $it") }
@@ -426,6 +435,7 @@ fun CommunityActionButton(icon: ImageVector, label: String, tint: Color, onClick
 fun CommunityPostDetailScreen(
     post: CommunityPost,
     workoutName: String?,
+    focusComments: Boolean = false,
     onBack: () -> Unit,
     onLike: () -> Unit,
     onComment: (String) -> Unit,
@@ -436,6 +446,14 @@ fun CommunityPostDetailScreen(
     var commentText by remember(post.id) { mutableStateOf("") }
     var replyingTo by remember(post.id) { mutableStateOf<String?>(null) }
     val replyAuthor = post.commentThreads.findComment(replyingTo)?.authorName
+    val commentFocusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(post.id, focusComments) {
+        if (focusComments) {
+            kotlinx.coroutines.delay(250)
+            commentFocusRequester.requestFocus()
+        }
+    }
 
     Scaffold(
         containerColor = PurpleSurface,
@@ -488,7 +506,10 @@ fun CommunityPostDetailScreen(
                     Text("${post.likes} curtidas", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround) {
                         CommunityActionButton(if (post.liked) Icons.Outlined.Favorite else Icons.Outlined.FavoriteBorder, post.likes.toString(), if (post.liked) Color(0xFFFF6B8A) else Color.White, onLike)
-                        CommunityActionButton(Icons.Outlined.ChatBubbleOutline, post.comments.toString(), Color.White) { replyingTo = null }
+                        CommunityActionButton(Icons.Outlined.ChatBubbleOutline, post.comments.toString(), Color.White) {
+                            replyingTo = null
+                            commentFocusRequester.requestFocus()
+                        }
                         CommunityActionButton(Icons.Outlined.Share, post.shares.toString(), Color.White, onShare)
                     }
                 }
@@ -502,7 +523,24 @@ fun CommunityPostDetailScreen(
                             TextButton(onClick = { replyingTo = null }) { Text("Cancelar", color = Color.White) }
                         }
                     }
-                    FormTextField(commentText, { commentText = it }, if (replyingTo == null) "Adicionar comentario" else "Responder comentario")
+                    TextField(
+                        value = commentText,
+                        onValueChange = { commentText = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(commentFocusRequester),
+                        label = { Text(if (replyingTo == null) "Adicionar comentario" else "Responder comentario") },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = PurpleSurface,
+                            unfocusedContainerColor = PurpleSurface,
+                            focusedIndicatorColor = Lime,
+                            unfocusedIndicatorColor = Color.Transparent,
+                            cursorColor = Lime
+                        )
+                    )
                     Button(
                         onClick = {
                             val target = replyingTo
