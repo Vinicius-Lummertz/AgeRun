@@ -366,7 +366,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                 )
             }
             composable("workout/new") {
-                WorkoutDetailScreen(
+                WorkoutFormScreen(
                     workout = null,
                     onBack = navController::popBackStack,
                     onSave = {
@@ -377,7 +377,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
             }
             composable("workout/{workoutId}") { entry ->
                 val workout = state.workouts.firstOrNull { it.id == entry.arguments?.getString("workoutId") }
-                WorkoutDetailScreen(
+                WorkoutFormScreen(
                     workout = workout,
                     onBack = navController::popBackStack,
                     onSave = {
