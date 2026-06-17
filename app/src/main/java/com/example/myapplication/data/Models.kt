@@ -42,9 +42,9 @@ data class Event(
 
 @Serializable
 enum class CommunityPostType {
-    POST,
-    POLL,
-    CHALLENGE
+    @SerialName("post") POST,
+    @SerialName("poll") POLL,
+    @SerialName("challenge") CHALLENGE
 }
 
 @Serializable
