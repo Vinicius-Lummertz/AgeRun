@@ -200,7 +200,8 @@ fun CommunityPostFormScreen(
             scope.launch {
                 try {
                     mediaLabel = onUploadMedia(uri)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    android.util.Log.e("AgeGoUpload", "upload falhou: ${e.message}", e)
                     mediaLabel = uri.toString()
                 } finally {
                     isUploadingMedia = false
@@ -540,7 +541,8 @@ fun GalleryImage(uri: String, modifier: Modifier = Modifier) {
 }
 
 fun isGalleryMediaUri(value: String): Boolean =
-    value.startsWith("content://") || value.startsWith("file://")
+    value.startsWith("content://") || value.startsWith("file://") ||
+    value.startsWith("http://") || value.startsWith("https://")
 
 @Composable
 fun PostTypeChip(label: String, selected: Boolean, onClick: () -> Unit) {
