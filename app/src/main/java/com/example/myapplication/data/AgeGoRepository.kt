@@ -1,5 +1,8 @@
 package com.example.myapplication.data
 
+import android.content.ContentResolver
+import android.net.Uri
+import android.util.Base64
 import android.util.Log
 import com.example.myapplication.BuildConfig
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +31,14 @@ interface AgeGoRepository {
     suspend fun addCommunityComment(postId: String, content: String, parentCommentId: String? = null)
     suspend fun toggleCommunityCommentLike(commentId: String)
     suspend fun shareCommunityPost(postId: String)
+    suspend fun uploadMedia(contentResolver: ContentResolver, uri: Uri): String
 }
+
+@Serializable
+private data class UploadMediaPayload(val base64: String, val mimeType: String)
+
+@Serializable
+private data class UploadMediaResponse(val url: String)
 
 class ApiAgeGoRepository(
     private val baseUrl: String
@@ -129,6 +139,17 @@ class ApiAgeGoRepository(
         requestUnit("POST", "/posts/$postId/share")
     }
 
+    override suspend fun uploadMedia(contentResolver: ContentResolver, uri: Uri): String =
+        withContext(Dispatchers.IO) {
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalStateException("Não foi possível ler a imagem")
+            val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
+            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            val body = json.encodeToString(UploadMediaPayload(base64 = base64, mimeType = mimeType))
+            val responseText = execute("POST", "/upload-media", body, readTimeoutMs = 60_000)
+            json.decodeFromString<UploadMediaResponse>(responseText).url
+        }
+
     private suspend inline fun <reified T> request(method: String, path: String): T =
         json.decodeFromString(execute(method, path, body = null))
 
@@ -143,12 +164,12 @@ class ApiAgeGoRepository(
         execute(method, path, json.encodeToString(body))
     }
 
-    private suspend fun execute(method: String, path: String, body: String?): String =
+    private suspend fun execute(method: String, path: String, body: String?, readTimeoutMs: Int = 20_000): String =
         withContext(Dispatchers.IO) {
             val connection = (URL("${baseUrl.trimEnd('/')}$path").openConnection() as HttpURLConnection).apply {
                 requestMethod = method
                 connectTimeout = 12_000
-                readTimeout = 20_000
+                readTimeout = readTimeoutMs
                 setRequestProperty("Accept", "application/json")
                 if (body != null) {
                     doOutput = true
@@ -224,6 +245,7 @@ class DemoAgeGoRepository(
     override suspend fun addCommunityComment(postId: String, content: String, parentCommentId: String?) = Unit
     override suspend fun toggleCommunityCommentLike(commentId: String) = Unit
     override suspend fun shareCommunityPost(postId: String) = Unit
+    override suspend fun uploadMedia(contentResolver: ContentResolver, uri: Uri): String = uri.toString()
 }
 
 private fun Student.withId() = copy(id = id.ifBlank { java.util.UUID.randomUUID().toString() })

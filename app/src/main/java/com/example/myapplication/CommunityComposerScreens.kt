@@ -116,6 +116,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -132,6 +133,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -141,6 +143,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -172,7 +176,8 @@ fun CommunityPostFormScreen(
     workouts: List<Workout>,
     target: String,
     onBack: () -> Unit,
-    onSave: (CommunityPost) -> Unit
+    onSave: (CommunityPost) -> Unit,
+    onUploadMedia: (suspend (Uri) -> String)? = null
 ) {
     var type by remember { mutableStateOf(CommunityPostType.POST) }
     var content by remember { mutableStateOf("") }
@@ -186,9 +191,25 @@ fun CommunityPostFormScreen(
     var contentWarning by remember { mutableStateOf("") }
     var activeComposerPanel by remember { mutableStateOf<String?>(null) }
     var selectedWorkoutId by remember { mutableStateOf(workouts.firstOrNull()?.id) }
+    var isUploadingMedia by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        mediaLabel = uri?.toString()
-        if (uri != null) activeComposerPanel = null
+        if (uri != null && onUploadMedia != null) {
+            isUploadingMedia = true
+            activeComposerPanel = null
+            scope.launch {
+                try {
+                    mediaLabel = onUploadMedia(uri)
+                } catch (_: Exception) {
+                    mediaLabel = uri.toString()
+                } finally {
+                    isUploadingMedia = false
+                }
+            }
+        } else if (uri != null) {
+            mediaLabel = uri.toString()
+            activeComposerPanel = null
+        }
     }
 
     SimpleFormScaffold(title = if (target == "events") "Publicar em eventos" else "Publicar em grupos", onBack = onBack) {
@@ -226,6 +247,18 @@ fun CommunityPostFormScreen(
                 PostTypeChip("Post", type == CommunityPostType.POST) { type = CommunityPostType.POST }
                 PostTypeChip("Enquete", type == CommunityPostType.POLL) { type = CommunityPostType.POLL }
                 PostTypeChip("Desafio", type == CommunityPostType.CHALLENGE) { type = CommunityPostType.CHALLENGE }
+            }
+        }
+        if (isUploadingMedia) {
+            item {
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Lime, strokeWidth = 2.dp)
+                    Text(" Enviando imagem...", color = Color.White.copy(alpha = .7f), fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
+                }
             }
         }
         if (mediaLabel != null || gifLabel != null || generatedImagePrompt.isNotBlank() || scheduledAt.isNotBlank() || location.isNotBlank() || contentWarning.isNotBlank()) {
@@ -479,18 +512,31 @@ fun ComposerChoiceGrid(options: List<String>, selected: String?, onSelect: (Stri
 
 @Composable
 fun GalleryImage(uri: String, modifier: Modifier = Modifier) {
-    AndroidView(
-        modifier = modifier.background(PurpleBackground),
-        factory = { context ->
-            ImageView(context).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
-                adjustViewBounds = true
+    if (uri.startsWith("http://") || uri.startsWith("https://")) {
+        AsyncImage(
+            model = uri,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier.background(PurpleBackground)
+        )
+    } else {
+        AndroidView(
+            modifier = modifier.background(PurpleBackground),
+            factory = { context ->
+                ImageView(context).apply {
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    adjustViewBounds = true
+                }
+            },
+            update = { imageView ->
+                try {
+                    imageView.setImageURI(Uri.parse(uri))
+                } catch (_: Exception) {
+                    imageView.setImageDrawable(null)
+                }
             }
-        },
-        update = { imageView ->
-            imageView.setImageURI(Uri.parse(uri))
-        }
-    )
+        )
+    }
 }
 
 fun isGalleryMediaUri(value: String): Boolean =

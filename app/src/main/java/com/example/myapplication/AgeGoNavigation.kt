@@ -128,6 +128,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -404,6 +405,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
             }
             composable("community/new/{target}") { entry ->
                 val target = entry.arguments?.getString("target") ?: "groups"
+                val context = LocalContext.current
                 CommunityPostFormScreen(
                     workouts = state.workouts,
                     target = target,
@@ -411,7 +413,8 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                     onSave = {
                         viewModel.saveCommunityPost(it)
                         navController.popBackStack()
-                    }
+                    },
+                    onUploadMedia = { uri -> viewModel.uploadMedia(context, uri) }
                 )
             }
             composable("community/post/{postId}/{focusComments}") { entry ->

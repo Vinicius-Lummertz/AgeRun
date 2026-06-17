@@ -1,5 +1,7 @@
 package com.example.myapplication.ui
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.data.AgeGoRepository
@@ -249,6 +251,9 @@ class AgeGoViewModel(
             )
         }
     }
+
+    suspend fun uploadMedia(context: Context, uri: Uri): String =
+        repository.uploadMedia(context.contentResolver, uri)
 }
 
 private fun List<CommunityComment>.addReplyToComment(
