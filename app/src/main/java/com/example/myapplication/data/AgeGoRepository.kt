@@ -293,6 +293,8 @@ private class FallbackRepository(
         runRemoteOrDemoUnit { addCommunityComment(postId, content, parentCommentId) }
     override suspend fun toggleCommunityCommentLike(commentId: String) = runRemoteOrDemoUnit { toggleCommunityCommentLike(commentId) }
     override suspend fun shareCommunityPost(postId: String) = runRemoteOrDemoUnit { shareCommunityPost(postId) }
+    override suspend fun uploadMedia(contentResolver: ContentResolver, uri: Uri): String =
+        remote.uploadMedia(contentResolver, uri)
 
     private suspend fun <T> runRemoteOrDemo(block: suspend AgeGoRepository.() -> T): T =
         runCatching { remote.block() }.getOrElse {
