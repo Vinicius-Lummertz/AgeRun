@@ -942,6 +942,31 @@ app.post('/poll-options/:id/vote', requireInstructor, async (req, res, next) => 
   }
 });
 
+app.post('/upload-media', requireInstructor, async (req, res, next) => {
+  try {
+    const { base64, mimeType } = req.body;
+    if (!base64 || !mimeType) return res.status(400).json({ error: 'base64 and mimeType required' });
+
+    const buffer = Buffer.from(base64, 'base64');
+    const ext = (mimeType.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+    const fileName = `${randomUUID()}.${ext}`;
+
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from('post-media')
+      .upload(fileName, buffer, { contentType: mimeType, upsert: false });
+
+    if (uploadError) throw uploadError;
+
+    const { data: { publicUrl } } = supabaseAdmin.storage
+      .from('post-media')
+      .getPublicUrl(fileName);
+
+    res.json({ url: publicUrl });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use((err, req, res, next) => {
   const status = err instanceof z.ZodError ? 400 : 500;
   console.error(err);
@@ -951,8 +976,18 @@ app.use((err, req, res, next) => {
   });
 });
 
-const server = app.listen(env.PORT, () => {
+async function ensureStorageBucket() {
+  const { data: buckets } = await supabaseAdmin.storage.listBuckets();
+  if (!buckets?.find((b) => b.name === 'post-media')) {
+    const { error } = await supabaseAdmin.storage.createBucket('post-media', { public: true });
+    if (error) console.error('Could not create post-media bucket:', error.message);
+    else console.log('Created storage bucket: post-media');
+  }
+}
+
+const server = app.listen(env.PORT, async () => {
   console.log(`AgeGo API listening on http://localhost:${env.PORT}`);
+  await ensureStorageBucket().catch((e) => console.error('Storage init error:', e));
 });
 
 server.on('error', (error) => {
