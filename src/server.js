@@ -11,16 +11,34 @@ const requiredEnv = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  PORT: z.coerce.number().default(3333)
+  PORT: z.coerce.number().default(3333),
+  APP_GATE_KEY: z.string().optional().default(''),
+  CORS_ORIGIN: z.string().optional().default('*')
 });
 
 const env = requiredEnv.parse(process.env);
 const app = express();
 
-app.use(helmet());
-app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+const rateBuckets = new Map();
+const AUTH_RATE_LIMIT = { windowMs: 60_000, max: 20 };
+const API_RATE_LIMIT = { windowMs: 60_000, max: 180 };
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
+app.use(cors({
+  origin: env.CORS_ORIGIN === '*' ? true : env.CORS_ORIGIN.split(',').map((origin) => origin.trim()).filter(Boolean),
+  credentials: false
+}));
+app.use(express.json({ limit: '8mb' }));
 app.use(morgan('dev'));
+app.use((req, res, next) => {
+  req.requestId = randomUUID();
+  res.setHeader('X-Request-Id', req.requestId);
+  next();
+});
 
 const supabaseAdmin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { autoRefreshToken: false, persistSession: false }
@@ -29,6 +47,9 @@ const supabaseAdmin = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_K
 const supabaseAnon = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
   auth: { autoRefreshToken: false, persistSession: false }
 });
+
+const SOCIAL_POSTS_BUCKET = 'agego-social-posts';
+const PROFILE_PHOTOS_BUCKET = 'agego-profile-photos';
 
 const statusSchema = z.enum(['active', 'draft', 'inactive']).default('active');
 const studentStatusSchema = z.enum(['active', 'pending_payment', 'inactive']).default('active');
@@ -110,8 +131,150 @@ const commentSchema = z.object({
   parentCommentId: z.string().uuid().nullable().optional()
 });
 
+const settingsSchema = z.object({
+  pixKey: z.string().trim().optional().default(''),
+  notificationEmail: z.boolean().optional().default(true),
+  notificationPush: z.boolean().optional().default(true)
+});
+
+const chargeSchema = z.object({
+  studentId: z.string().uuid(),
+  description: z.string().trim().optional().default('Mensalidade'),
+  amount: z.number().nonnegative(),
+  dueDate: z.string().trim().min(1)
+});
+
+const workoutSessionSchema = z.object({
+  routineId: z.string().trim().optional().default(''),
+  routineName: z.string().trim().optional().default(''),
+  dayNumber: z.number().int().positive().optional().default(1),
+  cycleStep: z.number().int().positive().optional().default(1),
+  elapsedMs: z.number().nonnegative(),
+  distanceMeters: z.number().nonnegative(),
+  paceSecondsPerKm: z.number().nonnegative().optional().default(0),
+  status: z.enum(['completed', 'paused']).default('completed'),
+  plannedSteps: z.array(z.object({
+    name: z.string().trim().default(''),
+    targetType: z.string().trim().default('open'),
+    targetValue: z.number().nonnegative().default(0),
+    unit: z.string().trim().default('')
+  })).default([]),
+  routePoints: z.array(z.object({
+    lat: z.number(),
+    lon: z.number(),
+    timestamp: z.number()
+  })).default([]),
+  splits: z.array(z.object({
+    km: z.number(),
+    elapsedMs: z.number().nonnegative(),
+    paceSeconds: z.number().nonnegative()
+  })).default([])
+});
+
+const loginSchema = z.object({
+  identifier: z.string().trim().min(3)
+});
+
+const loginVerifySchema = z.object({
+  identifier: z.string().trim().min(3),
+  token: z.string().trim().min(4)
+});
+
+const instructorRegisterSchema = z.object({
+  name: z.string().trim().min(2),
+  email: z.string().trim().email(),
+  phone: z.string().trim().optional().default('')
+});
+
+const verifyTokenSchema = z.object({
+  email: z.string().trim().email(),
+  token: z.string().trim().min(4),
+  displayName: z.string().trim().optional().default(''),
+  photoUrl: z.string().trim().optional().default(''),
+  photoBase64: z.string().trim().optional().default(''),
+  photoMimeType: z.string().trim().optional().default('')
+});
+
+const studentStartSchema = z.object({
+  phone: z.string().trim().min(6)
+});
+
+const studentCompleteSchema = z.object({
+  phone: z.string().trim().min(6),
+  email: z.string().trim().email(),
+  nickname: z.string().trim().min(2),
+  photoUrl: z.string().trim().optional().default(''),
+  photoBase64: z.string().trim().optional().default(''),
+  photoMimeType: z.string().trim().optional().default(''),
+  token: z.string().trim().min(4)
+});
+
+const profileSchema = z.object({
+  name: z.string().trim().min(2),
+  photoBase64: z.string().trim().optional().default(''),
+  photoMimeType: z.string().trim().optional().default('')
+});
+
 function randomPassword() {
   return `AgeGo${randomUUID().slice(0, 8)}A1`;
+}
+
+function verificationCode() {
+  return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+function normalizePhone(value = '') {
+  return String(value).replace(/\D/g, '');
+}
+
+function loginContact(value = '') {
+  const raw = String(value).trim();
+  return raw.includes('@') ? raw.toLowerCase() : normalizePhone(raw);
+}
+
+function clientIp(req) {
+  return req.ip || req.headers['x-forwarded-for'] || req.socket?.remoteAddress || 'unknown';
+}
+
+function rateLimit({ windowMs, max }, scope) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = `${scope}:${clientIp(req)}`;
+    const bucket = rateBuckets.get(key);
+    if (!bucket || bucket.resetAt <= now) {
+      rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+    bucket.count += 1;
+    if (bucket.count > max) {
+      res.setHeader('Retry-After', Math.ceil((bucket.resetAt - now) / 1000));
+      return res.status(429).json({ error: 'Muitas tentativas. Tente novamente em instantes.' });
+    }
+    next();
+  };
+}
+
+function requireAppGate(req, res, next) {
+  if (!env.APP_GATE_KEY) return next();
+  const provided = req.headers['x-agego-app-key'];
+  if (provided !== env.APP_GATE_KEY) {
+    return res.status(401).json({ error: 'App nao autorizado' });
+  }
+  next();
+}
+
+function authResponse(session, profile) {
+  return {
+    accessToken: session?.access_token ?? '',
+    refreshToken: session?.refresh_token ?? '',
+    id: profile?.id ?? '',
+    role: profile?.role ?? '',
+    name: profile?.name ?? '',
+    email: profile?.email ?? '',
+    phone: profile?.phone ?? '',
+    avatarUrl: profile?.avatar_url ?? '',
+    needsProfile: false
+  };
 }
 
 function toCamelStudent(row) {
@@ -120,6 +283,7 @@ function toCamelStudent(row) {
     name: row.name,
     email: row.email ?? '',
     phone: row.phone ?? '',
+    avatarUrl: row.avatar_url ?? '',
     routine: row.routine ?? '',
     plan_name: row.plan_name ?? row.plan ?? 'Sem plano',
     status: row.status ?? 'active'
@@ -163,7 +327,8 @@ function toPost(row, comments = []) {
     title: row.title ?? '',
     content: row.content ?? '',
     target: row.target ?? 'groups',
-    authorName: row.author_name ?? 'AgeGo',
+    authorName: row.author_name ?? 'Usuario',
+    authorAvatarUrl: row.author_avatar_url ?? '',
     linkedWorkoutId: row.linked_workout_id,
     pollOptions: normalizePollOptions(row.poll_options),
     commentThreads: comments,
@@ -195,7 +360,8 @@ function nestComments(rows) {
   rows.forEach((row) => {
     byId.set(row.id, {
       id: row.id,
-      authorName: row.author_name ?? 'AgeGo',
+      authorName: row.author_name ?? 'Usuario',
+      authorAvatarUrl: row.author_avatar_url ?? '',
       content: row.content ?? '',
       liked: Boolean(row.liked),
       likes: row.likes ?? 0,
@@ -223,58 +389,39 @@ async function authUserFromRequest(req) {
   return data.user;
 }
 
-async function ensureInstructor(req) {
+async function profileFromRequest(req) {
   const authUser = await authUserFromRequest(req);
-  if (authUser) {
-    const { data } = await supabaseAdmin
+  if (!authUser) return null;
+
+  return queryOrThrow(
+    supabaseAdmin
       .from('users')
-      .select('id, role')
+      .select('id, name, email, phone, role, avatar_url, is_active')
       .eq('id', authUser.id)
-      .maybeSingle();
-    if (data?.role === 'instructor') return data.id;
-  }
-
-  const { data: existingInstructor, error: findError } = await supabaseAdmin
-    .from('users')
-    .select('id')
-    .eq('role', 'instructor')
-    .order('created_at', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (findError) throw findError;
-  if (existingInstructor?.id) return existingInstructor.id;
-
-  const email = 'admin@agego.local';
-  const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
-    email,
-    password: 'Admin@123456',
-    email_confirm: true,
-    user_metadata: { name: 'Admin AgeGo', role: 'instructor' }
-  });
-
-  if (createError) throw createError;
-  const id = created.user.id;
-  const { error: upsertError } = await supabaseAdmin.from('users').upsert({
-    id,
-    email,
-    name: 'Admin AgeGo',
-    role: 'instructor',
-    is_active: true
-  });
-  if (upsertError) throw upsertError;
-  return id;
+      .maybeSingle()
+  );
 }
 
-async function currentUserId(req, instructorId) {
-  const authUser = await authUserFromRequest(req);
-  return authUser?.id ?? instructorId;
+async function requireAuthenticated(req, res, next) {
+  try {
+    const profile = await profileFromRequest(req);
+    if (!profile || profile.is_active === false) return res.status(401).json({ error: 'Sessao invalida' });
+    req.userProfile = profile;
+    req.actorId = profile.id;
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
 
 async function requireInstructor(req, res, next) {
   try {
-    req.instructorId = await ensureInstructor(req);
-    req.actorId = await currentUserId(req, req.instructorId);
+    const profile = await profileFromRequest(req);
+    if (!profile || profile.is_active === false) return res.status(401).json({ error: 'Sessao invalida' });
+    if (profile.role !== 'instructor') return res.status(403).json({ error: 'Acesso restrito ao professor' });
+    req.userProfile = profile;
+    req.instructorId = profile.id;
+    req.actorId = profile.id;
     next();
   } catch (error) {
     next(error);
@@ -288,7 +435,7 @@ async function queryOrThrow(builder) {
 }
 
 async function loadDashboard(instructorId) {
-  const [students, workouts, announcements, events, groups, routines, posts] = await Promise.all([
+  const [students, workouts, announcements, events, groups, routines, posts, trainingNow] = await Promise.all([
     loadStudents(instructorId),
     queryOrThrow(
       supabaseAdmin
@@ -319,7 +466,8 @@ async function loadDashboard(instructorId) {
         .eq('instructor_id', instructorId)
         .order('name')
     ),
-    loadPosts(instructorId, instructorId)
+    loadPosts(instructorId, instructorId),
+    loadTrainingNow(instructorId)
   ]);
 
   return {
@@ -329,7 +477,99 @@ async function loadDashboard(instructorId) {
     events: events.map(toEvent),
     groups: groups.map(toDirectory),
     routines: routines.map(toDirectory),
-    communityPosts: posts
+    communityPosts: posts,
+    trainingNow
+  };
+}
+
+function workoutNamesFromRoutineDescription(description = '') {
+  return String(description)
+    .split('\n')
+    .filter((line) => line.trim().startsWith('Dia '))
+    .flatMap((line) => line.split(':').slice(1).join(':').split('|')[0].split(','))
+    .map((name) => name.trim())
+    .filter((name) => name && name !== 'sem treinos');
+}
+
+async function loadDashboardForProfile(profile) {
+  if (profile.role === 'instructor') return loadDashboard(profile.id);
+  if (profile.role !== 'student') throw Object.assign(new Error('Role sem dashboard'), { statusCode: 403 });
+
+  const studentProfile = await queryOrThrow(
+    supabaseAdmin
+      .from('student_profiles')
+      .select(`
+        id,
+        instructor_id,
+        status,
+        goal,
+        users!student_profiles_user_id_fkey(name, email, phone, avatar_url),
+        student_plans(is_active, plans(name))
+      `)
+      .eq('user_id', profile.id)
+      .maybeSingle()
+  );
+  if (!studentProfile) throw Object.assign(new Error('Aluno nao vinculado a professor'), { statusCode: 403 });
+
+  const instructorId = studentProfile.instructor_id;
+  const allGroups = await loadGroups(instructorId);
+  const studentGroups = allGroups.filter((group) => group.studentIds.includes(studentProfile.id));
+  const groupIds = studentGroups.map((group) => group.id);
+  const routines = await queryOrThrow(
+    supabaseAdmin
+      .from('routines')
+      .select('id, name, description, status')
+      .eq('instructor_id', instructorId)
+      .order('name')
+  );
+  const routineGoal = studentProfile.goal ?? '';
+  const assignedRoutines = routines.filter((routine) => routine.id === routineGoal || routine.name === routineGoal);
+  const assignedWorkoutNames = new Set(
+    assignedRoutines
+      .flatMap((routine) => workoutNamesFromRoutineDescription(routine.description ?? ''))
+      .map((name) => name.toLowerCase())
+  );
+  const instructorWorkouts = assignedWorkoutNames.size
+    ? await queryOrThrow(
+        supabaseAdmin
+          .from('workouts')
+          .select('id, name, description, icon_name, status')
+          .eq('instructor_id', instructorId)
+      )
+    : [];
+  const assignedWorkouts = instructorWorkouts.filter((workout) => assignedWorkoutNames.has(String(workout.name ?? '').toLowerCase()));
+  const events = await queryOrThrow(
+    supabaseAdmin
+      .from('events')
+      .select('id, name, description, event_date, location, target_groups')
+      .eq('instructor_id', instructorId)
+      .order('event_date', { ascending: true })
+  );
+  const visibleEvents = events.filter((event) => {
+    const targets = Array.isArray(event.target_groups) ? event.target_groups : [];
+    return targets.length === 0 || targets.some((groupId) => groupIds.includes(groupId));
+  });
+  const posts = await loadStudentPosts(instructorId, profile.id, studentProfile.id, groupIds);
+  const activePlan = studentProfile.student_plans?.find((item) => item.is_active);
+
+  return {
+    students: [toCamelStudent({
+      id: studentProfile.id,
+      name: studentProfile.users?.name ?? profile.name ?? 'Aluno',
+      email: studentProfile.users?.email ?? profile.email ?? '',
+      phone: studentProfile.users?.phone ?? profile.phone ?? '',
+      avatar_url: studentProfile.users?.avatar_url ?? profile.avatar_url ?? '',
+      routine: studentProfile.goal ?? '',
+      plan_name: activePlan?.plans?.name ?? 'Sem plano',
+      status: studentProfile.status
+    })],
+    workouts: assignedWorkouts.map(toCamelWorkout),
+    announcements: [],
+    events: visibleEvents.map(toEvent),
+    groups: studentGroups.map(toDirectory),
+    routines: assignedRoutines.map(toDirectory),
+    communityPosts: posts,
+    trainingNow: []
   };
 }
 
@@ -341,7 +581,7 @@ async function loadStudents(instructorId) {
         id,
         status,
         goal,
-        users!student_profiles_user_id_fkey(name, email, phone),
+        users!student_profiles_user_id_fkey(name, email, phone, avatar_url),
         student_plans(is_active, plans(name))
       `)
       .eq('instructor_id', instructorId)
@@ -355,11 +595,39 @@ async function loadStudents(instructorId) {
       name: row.users?.name ?? 'Aluno',
       email: row.users?.email ?? '',
       phone: row.users?.phone ?? '',
+      avatar_url: row.users?.avatar_url ?? '',
       routine: row.goal ?? '',
       plan_name: activePlan?.plans?.name ?? 'Sem plano',
       status: row.status
     });
   });
+}
+
+async function loadTrainingNow(instructorId) {
+  const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const rows = await queryOrThrow(
+    supabaseAdmin
+      .from('student_presence')
+      .select(`
+        last_seen_at,
+        student_profiles!student_presence_student_profile_id_fkey(
+          id,
+          instructor_id,
+          users!student_profiles_user_id_fkey(name, avatar_url)
+        )
+      `)
+      .gte('last_seen_at', since)
+      .order('last_seen_at', { ascending: false })
+  );
+
+  return rows
+    .filter((row) => row.student_profiles?.instructor_id === instructorId)
+    .map((row) => ({
+      id: row.student_profiles.id,
+      name: row.student_profiles.users?.name ?? 'Aluno',
+      avatarUrl: row.student_profiles.users?.avatar_url ?? '',
+      lastSeenAt: row.last_seen_at
+    }));
 }
 
 async function loadGroups(instructorId) {
@@ -398,7 +666,7 @@ async function loadPosts(instructorId, actorId = instructorId) {
         location,
         content_warning,
         published_at,
-        users!community_posts_author_id_fkey(name)
+        users!community_posts_author_id_fkey(name, avatar_url)
       `)
       .eq('instructor_id', instructorId)
       .eq('is_active', true)
@@ -415,7 +683,7 @@ async function loadPosts(instructorId, actorId = instructorId) {
     queryOrThrow(
       supabaseAdmin
         .from('community_post_comments')
-        .select('id, post_id, parent_comment_id, author_id, content, users!community_post_comments_author_id_fkey(name)')
+        .select('id, post_id, parent_comment_id, author_id, content, users!community_post_comments_author_id_fkey(name, avatar_url)')
         .in('post_id', postIds)
         .eq('is_active', true)
         .order('created_at')
@@ -435,7 +703,8 @@ async function loadPosts(instructorId, actorId = instructorId) {
   const likedPostIds = new Set(likes.filter((like) => like.user_id === actorId).map((like) => like.post_id));
   const commentsByPost = groupBy(comments.map((comment) => ({
     ...comment,
-    author_name: comment.users?.name ?? 'AgeGo',
+    author_name: comment.users?.name ?? 'Usuario',
+    author_avatar_url: comment.users?.avatar_url ?? '',
     likes: commentLikesByComment.get(comment.id) ?? 0,
     liked: likedCommentIds.has(comment.id)
   })), 'post_id');
@@ -444,7 +713,8 @@ async function loadPosts(instructorId, actorId = instructorId) {
     const postComments = commentsByPost.get(post.id) ?? [];
     return toPost({
       ...post,
-      author_name: post.users?.name ?? 'AgeGo',
+      author_name: post.users?.name ?? 'Usuario',
+      author_avatar_url: post.users?.avatar_url ?? '',
       likes: likesByPost.get(post.id) ?? 0,
       comments: postComments.length,
       shares: sharesByPost.get(post.id) ?? 0,
@@ -484,9 +754,414 @@ app.get('/health', (req, res) => {
   res.json({ ok: true, service: 'agego-api' });
 });
 
-app.get('/dashboard', requireInstructor, async (req, res, next) => {
+app.use('/auth', rateLimit(AUTH_RATE_LIMIT, 'auth'), requireAppGate);
+app.use(rateLimit(API_RATE_LIMIT, 'api'));
+
+app.post('/auth/login/start', async (req, res, next) => {
   try {
-    res.json(await loadDashboard(req.instructorId));
+    const input = loginSchema.parse(req.body);
+    const identifier = input.identifier.trim();
+    let email = identifier.includes('@') ? identifier.toLowerCase() : '';
+    const contact = loginContact(identifier);
+
+    if (!email) {
+      const digits = normalizePhone(identifier);
+      const profile = await queryOrThrow(
+        supabaseAdmin
+          .from('users')
+          .select('id, email, is_active')
+          .eq('phone', digits)
+          .maybeSingle()
+      );
+      email = profile?.email ?? '';
+    }
+
+    const profile = await queryOrThrow(
+      supabaseAdmin
+        .from('users')
+        .select('id, email, phone, role, is_active')
+        .or(`email.eq.${email || contact},phone.eq.${contact}`)
+        .maybeSingle()
+    );
+
+    if (!profile) return res.status(404).json({ error: 'Contato nao encontrado' });
+
+    if (profile.is_active === false && profile.role === 'student' && !identifier.includes('@')) {
+      return res.json({
+        ok: true,
+        message: 'Primeiro acesso detectado. Use o codigo enviado pelo professor.',
+        verificationToken: '',
+        nextStep: 'student_first_access'
+      });
+    }
+
+    if (profile.is_active === false) return res.status(403).json({ error: 'Conta ainda precisa de verificacao' });
+
+    const token = verificationCode();
+    await queryOrThrow(supabaseAdmin.from('auth_verification_tokens').insert({
+      user_id: profile.id,
+      contact,
+      purpose: 'login',
+      token,
+      expires_at: new Date(Date.now() + 20 * 60 * 1000).toISOString()
+    }));
+
+    res.json({
+      ok: true,
+      message: 'Token de acesso gerado',
+      verificationToken: token,
+      nextStep: 'login'
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/auth/login/verify', async (req, res, next) => {
+  try {
+    const input = loginVerifySchema.parse(req.body);
+    const contact = loginContact(input.identifier);
+    const tokenRow = await queryOrThrow(
+      supabaseAdmin
+        .from('auth_verification_tokens')
+        .select('id, user_id, expires_at, consumed_at')
+        .eq('contact', contact)
+        .eq('purpose', 'login')
+        .eq('token', input.token)
+        .maybeSingle()
+    );
+
+    if (!tokenRow || tokenRow.consumed_at || new Date(tokenRow.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Token invalido ou expirado' });
+    }
+
+    const profile = await queryOrThrow(
+      supabaseAdmin
+        .from('users')
+        .select('id, name, email, phone, role, avatar_url, is_active')
+        .eq('id', tokenRow.user_id)
+        .maybeSingle()
+    );
+
+    if (!profile || profile.is_active === false) {
+      return res.status(403).json({ error: 'Conta ainda nao verificada' });
+    }
+
+    const tempPassword = randomPassword();
+    const { error: updateAuthError } = await supabaseAdmin.auth.admin.updateUserById(profile.id, {
+      password: tempPassword,
+      email_confirm: true
+    });
+    if (updateAuthError) throw updateAuthError;
+
+    const { data, error } = await supabaseAnon.auth.signInWithPassword({
+      email: profile.email,
+      password: tempPassword
+    });
+    if (error || !data.session) throw error;
+
+    await queryOrThrow(supabaseAdmin.from('auth_verification_tokens').update({ consumed_at: new Date().toISOString() }).eq('id', tokenRow.id));
+
+    res.json(authResponse(data.session, profile));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/auth/refresh', async (req, res, next) => {
+  try {
+    const refreshToken = String(req.body?.refreshToken || '');
+    if (!refreshToken) return res.status(401).json({ error: 'Refresh token ausente' });
+
+    const { data, error } = await supabaseAnon.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data.session?.user) return res.status(401).json({ error: 'Sessao expirada. Entre novamente.' });
+
+    const profile = await queryOrThrow(
+      supabaseAdmin
+        .from('users')
+        .select('id, name, email, phone, role, avatar_url, is_active')
+        .eq('id', data.session.user.id)
+        .maybeSingle()
+    );
+    if (!profile || profile.is_active === false) return res.status(401).json({ error: 'Sessao invalida' });
+
+    res.json(authResponse(data.session, profile));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/auth/instructor/register', async (req, res, next) => {
+  try {
+    const input = instructorRegisterSchema.parse(req.body);
+    const existing = await queryOrThrow(
+      supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('email', input.email)
+        .maybeSingle()
+    );
+    if (existing) return res.status(409).json({ error: 'Email ja cadastrado' });
+
+    const token = verificationCode();
+    await queryOrThrow(supabaseAdmin.from('auth_pending_registrations').insert({
+      name: input.name,
+      email: input.email,
+      phone: normalizePhone(input.phone),
+      token,
+      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    }));
+
+    res.status(201).json({
+      ok: true,
+      message: 'Token de verificacao gerado',
+      verificationToken: token
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/auth/instructor/verify', async (req, res, next) => {
+  try {
+    const input = verifyTokenSchema.parse(req.body);
+    const pending = await queryOrThrow(
+      supabaseAdmin
+        .from('auth_pending_registrations')
+        .select('id, name, email, phone, token, expires_at, consumed_at')
+        .eq('email', input.email)
+        .eq('token', input.token)
+        .order('created_at', { ascending: false })
+        .maybeSingle()
+    );
+
+    if (!pending || pending.consumed_at || new Date(pending.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Token invalido ou expirado' });
+    }
+
+    const existing = await queryOrThrow(
+      supabaseAdmin
+        .from('users')
+        .select('id')
+        .eq('email', input.email)
+        .maybeSingle()
+    );
+    if (existing) return res.status(409).json({ error: 'Email ja cadastrado' });
+
+    const tempPassword = randomPassword();
+    const displayName = input.displayName || pending.name;
+    const { data: created, error: createError } = await supabaseAdmin.auth.admin.createUser({
+      email: pending.email,
+      password: tempPassword,
+      email_confirm: true,
+      user_metadata: {
+        name: displayName,
+        role: 'instructor',
+        photoUrl: input.photoUrl
+      }
+    });
+    if (createError || !created.user) throw createError;
+    const avatarUrl = await uploadProfilePhoto(created.user.id, input.photoBase64, input.photoMimeType) || input.photoUrl;
+
+    const profile = await queryOrThrow(
+      supabaseAdmin
+        .from('users')
+        .upsert({
+          id: created.user.id,
+          email: pending.email,
+          name: displayName,
+          phone: pending.phone,
+          avatar_url: avatarUrl,
+          role: 'instructor',
+          is_active: true
+        }, { onConflict: 'id' })
+        .select('id, name, email, phone, role, avatar_url, is_active')
+        .single()
+    );
+
+    if (avatarUrl) {
+      await supabaseAdmin.auth.admin.updateUserById(profile.id, {
+        user_metadata: { name: displayName, role: 'instructor', avatar_url: avatarUrl, photoUrl: avatarUrl }
+      });
+    }
+
+    const { data, error } = await supabaseAnon.auth.signInWithPassword({
+      email: profile.email,
+      password: tempPassword
+    });
+    if (error || !data.session) throw error;
+
+    await queryOrThrow(supabaseAdmin.from('auth_pending_registrations').update({ consumed_at: new Date().toISOString() }).eq('id', pending.id));
+    res.json(authResponse(data.session, profile));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/auth/student/start', async (req, res, next) => {
+  try {
+    const input = studentStartSchema.parse(req.body);
+    const digits = normalizePhone(input.phone);
+    const profile = await queryOrThrow(
+      supabaseAdmin
+        .from('users')
+        .select('id, email, role')
+        .eq('phone', digits)
+        .eq('role', 'student')
+        .maybeSingle()
+    );
+    if (!profile) return res.status(404).json({ error: 'Telefone ainda nao foi cadastrado por um professor' });
+
+    const token = verificationCode();
+    await queryOrThrow(supabaseAdmin.from('auth_verification_tokens').insert({
+      user_id: profile.id,
+      contact: digits,
+      purpose: 'student_first_access',
+      token,
+      expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+    }));
+
+    res.json({
+      ok: true,
+      message: 'Token de primeiro acesso gerado',
+      verificationToken: token
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/auth/student/complete', async (req, res, next) => {
+  try {
+    const input = studentCompleteSchema.parse(req.body);
+    const digits = normalizePhone(input.phone);
+    const tokenRow = await queryOrThrow(
+      supabaseAdmin
+        .from('auth_verification_tokens')
+        .select('id, user_id, expires_at, consumed_at')
+        .eq('contact', digits)
+        .eq('purpose', 'student_first_access')
+        .eq('token', input.token)
+        .maybeSingle()
+    );
+
+    if (!tokenRow || tokenRow.consumed_at || new Date(tokenRow.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Token invalido ou expirado' });
+    }
+
+    const tempPassword = randomPassword();
+    const avatarUrl = await uploadProfilePhoto(tokenRow.user_id, input.photoBase64, input.photoMimeType) || input.photoUrl;
+    const { error: updateAuthError } = await supabaseAdmin.auth.admin.updateUserById(tokenRow.user_id, {
+      email: input.email,
+      password: tempPassword,
+      email_confirm: true,
+      user_metadata: {
+        name: input.nickname,
+        role: 'student',
+        avatar_url: avatarUrl,
+        photoUrl: avatarUrl
+      }
+    });
+    if (updateAuthError) throw updateAuthError;
+
+    const profile = await queryOrThrow(
+      supabaseAdmin.from('users').update({
+        email: input.email,
+        name: input.nickname,
+        phone: digits,
+        avatar_url: avatarUrl,
+        role: 'student',
+        is_active: true
+      }).eq('id', tokenRow.user_id).select('id, name, email, phone, role, avatar_url, is_active').single()
+    );
+    await queryOrThrow(supabaseAdmin.from('auth_verification_tokens').update({ consumed_at: new Date().toISOString() }).eq('id', tokenRow.id));
+
+    const { data, error } = await supabaseAnon.auth.signInWithPassword({
+      email: input.email,
+      password: tempPassword
+    });
+    if (error || !data.session) throw error;
+
+    res.json(authResponse(data.session, profile));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/dashboard', requireAuthenticated, async (req, res, next) => {
+  try {
+    res.json(await loadDashboardForProfile(req.userProfile));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/presence/training-now', requireAuthenticated, async (req, res, next) => {
+  try {
+    if (req.userProfile.role !== 'student') return res.status(403).json({ error: 'Apenas alunos podem marcar presenca' });
+    const studentProfile = await queryOrThrow(
+      supabaseAdmin
+        .from('student_profiles')
+        .select('id, instructor_id')
+        .eq('user_id', req.actorId)
+        .maybeSingle()
+    );
+    if (!studentProfile) return res.status(403).json({ error: 'Aluno nao vinculado a professor' });
+
+    await queryOrThrow(
+      supabaseAdmin
+        .from('student_presence')
+        .upsert({
+          user_id: req.actorId,
+          student_profile_id: studentProfile.id,
+          instructor_id: studentProfile.instructor_id,
+          last_seen_at: new Date().toISOString()
+        }, { onConflict: 'user_id' })
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/workout-sessions', requireAuthenticated, async (req, res, next) => {
+  try {
+    if (req.userProfile.role !== 'student') return res.status(403).json({ error: 'Apenas alunos podem salvar sessao de treino' });
+    const input = workoutSessionSchema.parse(req.body);
+    const studentProfile = await queryOrThrow(
+      supabaseAdmin
+        .from('student_profiles')
+        .select('id, instructor_id')
+        .eq('user_id', req.actorId)
+        .maybeSingle()
+    );
+    if (!studentProfile) return res.status(403).json({ error: 'Aluno nao vinculado a professor' });
+
+    const row = await queryOrThrow(
+      supabaseAdmin
+        .from('workout_sessions')
+        .insert({
+          user_id: req.actorId,
+          student_profile_id: studentProfile.id,
+          instructor_id: studentProfile.instructor_id,
+          routine_id: input.routineId || null,
+          routine_name: input.routineName,
+          day_number: input.dayNumber,
+          cycle_step: input.cycleStep,
+          elapsed_ms: Math.round(input.elapsedMs),
+          distance_meters: input.distanceMeters,
+          pace_seconds_per_km: input.paceSecondsPerKm,
+          status: input.status,
+          planned_steps: input.plannedSteps,
+          route_points: input.routePoints,
+          splits: input.splits,
+          completed_at: input.status === 'completed' ? new Date().toISOString() : null
+        })
+        .select()
+        .single()
+    );
+
+    res.status(201).json({ session: row });
   } catch (error) {
     next(error);
   }
@@ -504,12 +1179,14 @@ app.get('/students', requireInstructor, async (req, res, next) => {
 app.post('/students', requireInstructor, async (req, res, next) => {
   try {
     const input = studentSchema.parse(req.body);
-    const password = input.password || randomPassword();
-    const email = input.email || `aluno-${Date.now()}@agego.local`;
+    const publicEmail = input.email || '';
+    const authEmail = publicEmail || `student-${randomUUID()}@internal.agego.local`;
+    const phone = normalizePhone(input.phone);
+    if (!phone) return res.status(400).json({ error: 'Telefone do aluno e obrigatorio' });
 
     const { data: createdUser, error: createUserError } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
+      email: authEmail,
+      password: randomPassword(),
       email_confirm: true,
       user_metadata: { name: input.name, role: 'student' }
     });
@@ -518,11 +1195,11 @@ app.post('/students', requireInstructor, async (req, res, next) => {
     const userId = createdUser.user.id;
     await queryOrThrow(supabaseAdmin.from('users').upsert({
       id: userId,
-      email,
+      email: publicEmail,
       name: input.name,
-      phone: input.phone,
+      phone,
       role: 'student',
-      is_active: true
+      is_active: false
     }));
 
     const student = await queryOrThrow(
@@ -541,7 +1218,28 @@ app.post('/students', requireInstructor, async (req, res, next) => {
         .single()
     );
 
-    res.status(201).json({ student, temporaryPassword: input.password ? undefined : password });
+    const accessCode = verificationCode();
+    await queryOrThrow(supabaseAdmin.from('auth_verification_tokens').insert({
+      user_id: userId,
+      contact: phone,
+      purpose: 'student_first_access',
+      token: accessCode,
+      expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    }));
+
+    res.status(201).json({
+      student: toCamelStudent({
+        id: student.id,
+        name: input.name,
+        email: publicEmail,
+        phone,
+        routine: input.routine,
+        plan_name: input.routine || 'Sem rotina',
+        status: input.status
+      }),
+      accessCode,
+      accessCodeExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    });
   } catch (error) {
     next(error);
   }
@@ -555,7 +1253,7 @@ app.put('/students/:id', requireInstructor, async (req, res, next) => {
     );
     await queryOrThrow(supabaseAdmin.from('users').update({
       name: input.name,
-      phone: input.phone
+      phone: normalizePhone(input.phone)
     }).eq('id', profile.user_id));
     const student = await queryOrThrow(
       supabaseAdmin.from('student_profiles').update({
@@ -827,7 +1525,7 @@ app.post('/announcements', requireInstructor, async (req, res, next) => {
   }
 });
 
-app.get('/posts', requireInstructor, async (req, res, next) => {
+app.get('/posts', requireCommunityActor, async (req, res, next) => {
   try {
     res.json({ posts: await loadPosts(req.instructorId, req.actorId) });
   } catch (error) {
@@ -835,7 +1533,7 @@ app.get('/posts', requireInstructor, async (req, res, next) => {
   }
 });
 
-app.post('/posts', requireInstructor, async (req, res, next) => {
+app.post('/posts', requireCommunityActor, async (req, res, next) => {
   try {
     const input = postSchema.parse(req.body);
     const post = await queryOrThrow(
@@ -870,7 +1568,7 @@ app.post('/posts', requireInstructor, async (req, res, next) => {
   }
 });
 
-app.post('/posts/:id/like', requireInstructor, async (req, res, next) => {
+app.post('/posts/:id/like', requireCommunityActor, async (req, res, next) => {
   try {
     const existing = await queryOrThrow(
       supabaseAdmin.from('community_post_likes').select('post_id').eq('post_id', req.params.id).eq('user_id', req.actorId).maybeSingle()
@@ -886,7 +1584,7 @@ app.post('/posts/:id/like', requireInstructor, async (req, res, next) => {
   }
 });
 
-app.post('/posts/:id/share', requireInstructor, async (req, res, next) => {
+app.post('/posts/:id/share', requireCommunityActor, async (req, res, next) => {
   try {
     await queryOrThrow(supabaseAdmin.from('community_post_shares').insert({ post_id: req.params.id, user_id: req.actorId }));
     res.status(201).json({ ok: true });
@@ -895,7 +1593,7 @@ app.post('/posts/:id/share', requireInstructor, async (req, res, next) => {
   }
 });
 
-app.post('/posts/:id/comments', requireInstructor, async (req, res, next) => {
+app.post('/posts/:id/comments', requireCommunityActor, async (req, res, next) => {
   try {
     const input = commentSchema.parse(req.body);
     const comment = await queryOrThrow(
@@ -912,7 +1610,7 @@ app.post('/posts/:id/comments', requireInstructor, async (req, res, next) => {
   }
 });
 
-app.post('/comments/:id/like', requireInstructor, async (req, res, next) => {
+app.post('/comments/:id/like', requireCommunityActor, async (req, res, next) => {
   try {
     const existing = await queryOrThrow(
       supabaseAdmin.from('community_comment_likes').select('comment_id').eq('comment_id', req.params.id).eq('user_id', req.actorId).maybeSingle()
@@ -928,7 +1626,7 @@ app.post('/comments/:id/like', requireInstructor, async (req, res, next) => {
   }
 });
 
-app.post('/poll-options/:id/vote', requireInstructor, async (req, res, next) => {
+app.post('/poll-options/:id/vote', requireCommunityActor, async (req, res, next) => {
   try {
     const option = await queryOrThrow(supabaseAdmin.from('community_poll_options').select('id, post_id').eq('id', req.params.id).single());
     await queryOrThrow(supabaseAdmin.from('community_poll_votes').upsert({
@@ -942,23 +1640,148 @@ app.post('/poll-options/:id/vote', requireInstructor, async (req, res, next) => 
   }
 });
 
-app.post('/upload-media', requireInstructor, async (req, res, next) => {
+app.get('/me', requireAuthenticated, async (req, res) => {
+  res.json({ user: authResponse(null, req.userProfile) });
+});
+
+app.put('/me', requireAuthenticated, async (req, res, next) => {
+  try {
+    const input = profileSchema.parse(req.body);
+    const avatarUrl = await uploadProfilePhoto(req.actorId, input.photoBase64, input.photoMimeType);
+    const update = {
+      name: input.name
+    };
+    if (avatarUrl) update.avatar_url = avatarUrl;
+
+    const profile = await queryOrThrow(
+      supabaseAdmin
+        .from('users')
+        .update(update)
+        .eq('id', req.actorId)
+        .select('id, name, email, phone, role, avatar_url, is_active')
+        .single()
+    );
+
+    await supabaseAdmin.auth.admin.updateUserById(req.actorId, {
+      user_metadata: {
+        name: profile.name,
+        role: profile.role,
+        avatar_url: profile.avatar_url ?? '',
+        photoUrl: profile.avatar_url ?? ''
+      }
+    });
+
+    res.json({ user: authResponse(null, profile) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/settings', requireInstructor, async (req, res, next) => {
+  try {
+    const row = await queryOrThrow(
+      supabaseAdmin
+        .from('instructor_settings')
+        .select('pix_key, notification_email, notification_push')
+        .eq('instructor_id', req.instructorId)
+        .maybeSingle()
+    );
+    res.json({
+      settings: {
+        pixKey: row?.pix_key ?? '',
+        notificationEmail: row?.notification_email ?? true,
+        notificationPush: row?.notification_push ?? true
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put('/settings', requireInstructor, async (req, res, next) => {
+  try {
+    const input = settingsSchema.parse(req.body);
+    const row = await queryOrThrow(
+      supabaseAdmin
+        .from('instructor_settings')
+        .upsert({
+          instructor_id: req.instructorId,
+          pix_key: input.pixKey,
+          notification_email: input.notificationEmail,
+          notification_push: input.notificationPush,
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single()
+    );
+    res.json({
+      settings: {
+        pixKey: row.pix_key ?? '',
+        notificationEmail: row.notification_email ?? true,
+        notificationPush: row.notification_push ?? true
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/charges', requireInstructor, async (req, res, next) => {
+  try {
+    const rows = await queryOrThrow(
+      supabaseAdmin
+        .from('student_charges')
+        .select('id, student_id, description, amount, due_date, paid_at, status')
+        .eq('instructor_id', req.instructorId)
+        .order('due_date', { ascending: false })
+    );
+    res.json({ charges: rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/charges', requireInstructor, async (req, res, next) => {
+  try {
+    const input = chargeSchema.parse(req.body);
+    const row = await queryOrThrow(
+      supabaseAdmin
+        .from('student_charges')
+        .insert({
+          instructor_id: req.instructorId,
+          student_id: input.studentId,
+          description: input.description,
+          amount: input.amount,
+          due_date: input.dueDate,
+          status: 'pending'
+        })
+        .select()
+        .single()
+    );
+    res.status(201).json({ charge: row });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/upload-media', requireAuthenticated, async (req, res, next) => {
   try {
     const { base64, mimeType } = req.body;
     if (!base64 || !mimeType) return res.status(400).json({ error: 'base64 and mimeType required' });
+    if (!String(mimeType).startsWith('image/')) return res.status(400).json({ error: 'Only images are supported' });
 
     const buffer = Buffer.from(base64, 'base64');
-    const ext = (mimeType.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
-    const fileName = `${randomUUID()}.${ext}`;
+    const ext = (mimeType.split('/')[1] || 'jpg').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+    const fileName = `${req.actorId}/${randomUUID()}.${ext}`;
 
     const { error: uploadError } = await supabaseAdmin.storage
-      .from('post-media')
+      .from(SOCIAL_POSTS_BUCKET)
       .upload(fileName, buffer, { contentType: mimeType, upsert: false });
 
     if (uploadError) throw uploadError;
 
     const { data: { publicUrl } } = supabaseAdmin.storage
-      .from('post-media')
+      .from(SOCIAL_POSTS_BUCKET)
       .getPublicUrl(fileName);
 
     res.json({ url: publicUrl });
@@ -968,21 +1791,151 @@ app.post('/upload-media', requireInstructor, async (req, res, next) => {
 });
 
 app.use((err, req, res, next) => {
-  const status = err instanceof z.ZodError ? 400 : 500;
-  console.error(err);
+  const status = err instanceof z.ZodError
+    ? 400
+    : (err.statusCode || err.status || (err.code === '23505' ? 409 : 500));
+  const code = err.code || (err instanceof z.ZodError ? 'invalid_payload' : 'server_error');
+  const message = err instanceof z.ZodError
+    ? 'Payload invalido'
+    : (err.message || 'Erro inesperado');
+  console.error({
+    requestId: req.requestId,
+    method: req.method,
+    path: req.originalUrl,
+    status,
+    code,
+    message,
+    details: err.details,
+    hint: err.hint
+  });
   res.status(status).json({
-    error: status === 400 ? 'Invalid payload' : 'Internal server error',
-    details: err instanceof z.ZodError ? err.flatten() : err.message
+    error: message,
+    requestId: req.requestId,
+    code,
+    method: req.method,
+    path: req.originalUrl,
+    details: err instanceof z.ZodError ? err.flatten() : (err.details || err.hint || null)
   });
 });
 
+async function uploadImageToBucket(bucketName, ownerId, base64, mimeType) {
+  if (!base64 || !mimeType) return '';
+  if (!String(mimeType).startsWith('image/')) {
+    throw Object.assign(new Error('Only images are supported'), { statusCode: 400 });
+  }
+
+  const buffer = Buffer.from(base64, 'base64');
+  const ext = (mimeType.split('/')[1] || 'jpg').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+  const fileName = `${ownerId}/${randomUUID()}.${ext}`;
+
+  const { error: uploadError } = await supabaseAdmin.storage
+    .from(bucketName)
+    .upload(fileName, buffer, { contentType: mimeType, upsert: false });
+
+  if (uploadError) throw uploadError;
+
+  const { data: { publicUrl } } = supabaseAdmin.storage
+    .from(bucketName)
+    .getPublicUrl(fileName);
+
+  return publicUrl;
+}
+
+async function uploadProfilePhoto(ownerId, base64, mimeType) {
+  return uploadImageToBucket(PROFILE_PHOTOS_BUCKET, ownerId, base64, mimeType);
+}
+
 async function ensureStorageBucket() {
   const { data: buckets } = await supabaseAdmin.storage.listBuckets();
-  if (!buckets?.find((b) => b.name === 'post-media')) {
-    const { error } = await supabaseAdmin.storage.createBucket('post-media', { public: true });
-    if (error) console.error('Could not create post-media bucket:', error.message);
-    else console.log('Created storage bucket: post-media');
+  const bucketOptions = {
+    public: true,
+    fileSizeLimit: 52428800,
+    allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+  };
+
+  for (const bucketName of [SOCIAL_POSTS_BUCKET, PROFILE_PHOTOS_BUCKET]) {
+    if (!buckets?.find((b) => b.name === bucketName)) {
+      const { error } = await supabaseAdmin.storage.createBucket(bucketName, bucketOptions);
+      if (error) console.error(`Could not create ${bucketName} bucket:`, error.message);
+      else console.log(`Created storage bucket: ${bucketName}`);
+      continue;
+    }
+
+    const { error } = await supabaseAdmin.storage.updateBucket(bucketName, bucketOptions);
+    if (error) console.error(`Could not update ${bucketName} bucket:`, error.message);
   }
+}
+
+async function communityContextForProfile(profile) {
+  if (profile.role === 'instructor') {
+    return { instructorId: profile.id, actorId: profile.id, studentProfileId: null };
+  }
+  if (profile.role === 'student') {
+    const studentProfile = await queryOrThrow(
+      supabaseAdmin
+        .from('student_profiles')
+        .select('id, instructor_id')
+        .eq('user_id', profile.id)
+        .maybeSingle()
+    );
+    if (!studentProfile) throw Object.assign(new Error('Aluno nao vinculado a professor'), { statusCode: 403 });
+    return { instructorId: studentProfile.instructor_id, actorId: profile.id, studentProfileId: studentProfile.id };
+  }
+  throw Object.assign(new Error('Perfil sem acesso a comunidade'), { statusCode: 403 });
+}
+
+async function requireCommunityActor(req, res, next) {
+  try {
+    const profile = await profileFromRequest(req);
+    if (!profile || profile.is_active === false) return res.status(401).json({ error: 'Sessao invalida' });
+    const context = await communityContextForProfile(profile);
+    req.userProfile = profile;
+    req.instructorId = context.instructorId;
+    req.actorId = context.actorId;
+    req.studentProfileId = context.studentProfileId;
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function loadStudentPosts(instructorId, actorId, studentProfileId, groupIds) {
+  const posts = await loadPosts(instructorId, actorId);
+  if (posts.length === 0) return [];
+  const postIds = posts.map((post) => post.id);
+  const [studentLinks, matchingGroupLinks, allGroupLinks] = await Promise.all([
+    queryOrThrow(
+      supabaseAdmin
+        .from('community_post_students')
+        .select('post_id, student_id')
+        .in('post_id', postIds)
+        .eq('student_id', studentProfileId)
+    ),
+    groupIds.length
+      ? queryOrThrow(
+          supabaseAdmin
+            .from('community_post_groups')
+            .select('post_id, group_id')
+            .in('post_id', postIds)
+            .in('group_id', groupIds)
+        )
+      : [],
+    queryOrThrow(
+      supabaseAdmin
+        .from('community_post_groups')
+        .select('post_id, group_id')
+        .in('post_id', postIds)
+    )
+  ]);
+  const studentPostIds = new Set(studentLinks.map((item) => item.post_id));
+  const groupPostIds = new Set(matchingGroupLinks.map((item) => item.post_id));
+  const postsWithExplicitGroups = new Set(allGroupLinks.map((item) => item.post_id));
+  return posts.filter((post) => {
+    if (post.target === 'all' || post.target === 'events') return true;
+    if (post.target === 'students') return studentPostIds.has(post.id);
+    if (post.target === 'groups') return !postsWithExplicitGroups.has(post.id) || groupPostIds.has(post.id);
+    return false;
+  });
 }
 
 const server = app.listen(env.PORT, async () => {
