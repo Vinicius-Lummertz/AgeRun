@@ -2,7 +2,6 @@
 
 import android.net.Uri
 import android.os.Bundle
-import android.widget.ImageView
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -141,7 +140,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
@@ -181,7 +179,8 @@ fun CommunityPostFormScreen(
 ) {
     var type by remember { mutableStateOf(CommunityPostType.POST) }
     var content by remember { mutableStateOf("") }
-    var options by remember { mutableStateOf("") }
+    val pollOptions = remember { mutableStateListOf("", "") }
+    var workoutQuery by remember { mutableStateOf("") }
     var mediaLabel by remember { mutableStateOf<String?>(null) }
     var gifLabel by remember { mutableStateOf<String?>(null) }
     var generatedImagePrompt by remember { mutableStateOf("") }
@@ -193,6 +192,10 @@ fun CommunityPostFormScreen(
     var selectedWorkoutId by remember { mutableStateOf(workouts.firstOrNull()?.id) }
     var isUploadingMedia by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val filteredWorkouts = workouts.filter { workout ->
+        workout.name.contains(workoutQuery, ignoreCase = true) ||
+            workout.description.orEmpty().contains(workoutQuery, ignoreCase = true)
+    }
     val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null && onUploadMedia != null) {
             isUploadingMedia = true
@@ -202,7 +205,7 @@ fun CommunityPostFormScreen(
                     mediaLabel = onUploadMedia(uri)
                 } catch (e: Exception) {
                     android.util.Log.e("AgeGoUpload", "upload falhou: ${e.message}", e)
-                    mediaLabel = uri.toString()
+                    mediaLabel = null
                 } finally {
                     isUploadingMedia = false
                 }
@@ -215,39 +218,30 @@ fun CommunityPostFormScreen(
 
     SimpleFormScaffold(title = if (target == "events") "Publicar em eventos" else "Publicar em grupos", onBack = onBack) {
         item {
-            Row(verticalAlignment = Alignment.Top) {
-                Image(
-                    painter = painterResource(R.drawable.profile),
-                    contentDescription = "Sua foto",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(42.dp).clip(CircleShape)
-                )
-                Column(Modifier.padding(start = 12.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    FormTextField(content, { content = it }, "O que esta acontecendo?")
-                    CommunityComposerToolbar(
-                        onMedia = { galleryLauncher.launch("image/*") },
-                        onGif = { activeComposerPanel = if (activeComposerPanel == "gif") null else "gif" },
-                        onGenerate = { activeComposerPanel = if (activeComposerPanel == "generate") null else "generate" },
-                        onPoll = {
-                            type = if (type == CommunityPostType.POLL) CommunityPostType.POST else CommunityPostType.POLL
-                            activeComposerPanel = "poll"
-                        },
-                        onEmoji = {
-                            showEmojiPanel = !showEmojiPanel
-                            activeComposerPanel = null
-                        },
-                        onSchedule = { activeComposerPanel = if (activeComposerPanel == "schedule") null else "schedule" },
-                        onLocation = { activeComposerPanel = if (activeComposerPanel == "location") null else "location" },
-                        onDisclosure = { activeComposerPanel = if (activeComposerPanel == "warning") null else "warning" }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextField(
+                    value = content,
+                    onValueChange = { content = it.take(300) },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
+                    placeholder = { Text("O que esta acontecendo?") },
+                    shape = RoundedCornerShape(18.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedContainerColor = PurpleSurface,
+                        unfocusedContainerColor = PurpleSurface,
+                        focusedIndicatorColor = Lime,
+                        unfocusedIndicatorColor = Color.Transparent,
+                        cursorColor = Lime
                     )
-                }
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PostTypeChip("Post", type == CommunityPostType.POST) { type = CommunityPostType.POST }
-                PostTypeChip("Enquete", type == CommunityPostType.POLL) { type = CommunityPostType.POLL }
-                PostTypeChip("Desafio", type == CommunityPostType.CHALLENGE) { type = CommunityPostType.CHALLENGE }
+                )
+                Text("${content.length}/300", color = Color.White.copy(alpha = .55f), fontSize = 12.sp, textAlign = TextAlign.End, modifier = Modifier.fillMaxWidth())
+                CommunityComposerToolbar(
+                    selectedType = type,
+                    onMedia = { galleryLauncher.launch("image/*") },
+                    onPoll = { type = if (type == CommunityPostType.POLL) CommunityPostType.POST else CommunityPostType.POLL },
+                    onChallenge = { type = if (type == CommunityPostType.CHALLENGE) CommunityPostType.POST else CommunityPostType.CHALLENGE }
+                )
             }
         }
         if (isUploadingMedia) {
@@ -275,48 +269,27 @@ fun CommunityPostFormScreen(
                 )
             }
         }
-        activeComposerPanel?.let { panel ->
-            item {
-                CommunityComposerPanel(
-                    panel = panel,
-                    mediaLabel = mediaLabel,
-                    gifLabel = gifLabel,
-                    generatedImagePrompt = generatedImagePrompt,
-                    scheduledAt = scheduledAt,
-                    location = location,
-                    contentWarning = contentWarning,
-                    onMediaSelected = { mediaLabel = it },
-                    onGifSelected = { gifLabel = it },
-                    onPromptChange = { generatedImagePrompt = it },
-                    onScheduleChange = { scheduledAt = it },
-                    onLocationChange = { location = it },
-                    onWarningChange = { contentWarning = it },
-                    onClose = { activeComposerPanel = null }
-                )
+        if (type == CommunityPostType.POLL) {
+            items(pollOptions.size) { index ->
+                FormTextField(pollOptions[index], { pollOptions[index] = it }, "Opcao ${index + 1}")
             }
-        }
-        if (showEmojiPanel) {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("👏", "🔥", "🏃", "💚", "💪").forEach { emoji ->
-                        Surface(
-                            modifier = Modifier.size(42.dp).clickable { content += emoji },
-                            color = PurpleSurface,
-                            shape = CircleShape
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(emoji, fontSize = 20.sp)
-                            }
-                        }
-                    }
+                TextButton(onClick = { pollOptions.add("") }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Add, contentDescription = null, tint = Lime)
+                    Text("Adicionar opcao", color = Lime, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp))
                 }
             }
         }
-        if (type == CommunityPostType.POLL) {
-            item { FormTextField(options, { options = it }, "Opcoes separadas por virgula") }
-        }
         if (type == CommunityPostType.CHALLENGE) {
-            items(workouts) { workout ->
+            item {
+                StudentSearchBar(
+                    value = workoutQuery,
+                    onValueChange = { workoutQuery = it },
+                    placeholder = "Pesquisar treino",
+                    modifier = Modifier.shadow(14.dp, RoundedCornerShape(50)).imePadding()
+                )
+            }
+            items(filteredWorkouts) { workout ->
                 SlimFilterBadge(workout.name, selectedWorkoutId == workout.id, { selectedWorkoutId = workout.id }, Modifier.fillMaxWidth())
             }
         }
@@ -330,13 +303,13 @@ fun CommunityPostFormScreen(
                         target = target,
                         authorName = "Voce",
                         linkedWorkoutId = if (type == CommunityPostType.CHALLENGE) selectedWorkoutId else null,
-                        pollOptions = if (type == CommunityPostType.POLL) options.split(",").map { it.trim() }.filter { it.isNotBlank() } else emptyList(),
+                        pollOptions = if (type == CommunityPostType.POLL) pollOptions.map { it.trim() }.filter { it.isNotBlank() } else emptyList(),
                         mediaLabel = mediaLabel,
-                        gifLabel = gifLabel,
-                        generatedImagePrompt = generatedImagePrompt.ifBlank { null },
-                        scheduledAt = scheduledAt.ifBlank { null },
-                        location = location.ifBlank { null },
-                        contentWarning = contentWarning.ifBlank { null }
+                        gifLabel = null,
+                        generatedImagePrompt = null,
+                        scheduledAt = null,
+                        location = null,
+                        contentWarning = null
                     )
                 )
             }
@@ -346,24 +319,15 @@ fun CommunityPostFormScreen(
 
 @Composable
 fun CommunityComposerToolbar(
+    selectedType: CommunityPostType,
     onMedia: () -> Unit,
-    onGif: () -> Unit,
-    onGenerate: () -> Unit,
     onPoll: () -> Unit,
-    onEmoji: () -> Unit,
-    onSchedule: () -> Unit,
-    onLocation: () -> Unit,
-    onDisclosure: () -> Unit
+    onChallenge: () -> Unit
 ) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         item { ComposerToolButton(Icons.Outlined.Image, "Midia", onMedia) }
-        item { ComposerToolButton(Icons.Outlined.GifBox, "GIF", onGif) }
-        item { ComposerToolButton(Icons.Outlined.AutoAwesome, "Gerar imagem", onGenerate) }
-        item { ComposerToolButton(Icons.Outlined.Poll, "Enquete", onPoll) }
-        item { ComposerToolButton(Icons.Outlined.InsertEmoticon, "Emoji", onEmoji) }
-        item { ComposerToolButton(Icons.Outlined.Schedule, "Agendar", onSchedule) }
-        item { ComposerToolButton(Icons.Outlined.LocationOn, "Local", onLocation) }
-        item { ComposerToolButton(Icons.Outlined.Flag, "Aviso", onDisclosure) }
+        item { ComposerToolButton(Icons.Outlined.Poll, if (selectedType == CommunityPostType.POLL) "Remover enquete" else "Enquete", onPoll) }
+        item { ComposerToolButton(Icons.Outlined.FitnessCenter, if (selectedType == CommunityPostType.CHALLENGE) "Remover desafio" else "Desafio", onChallenge) }
     }
 }
 
@@ -406,7 +370,10 @@ fun ComposerImagePreview(uri: String, onRemove: () -> Unit) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             GalleryImage(
                 uri = uri,
-                modifier = Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(14.dp))
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 160.dp, max = 360.dp)
+                    .clip(RoundedCornerShape(14.dp))
             )
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -513,31 +480,12 @@ fun ComposerChoiceGrid(options: List<String>, selected: String?, onSelect: (Stri
 
 @Composable
 fun GalleryImage(uri: String, modifier: Modifier = Modifier) {
-    if (uri.startsWith("http://") || uri.startsWith("https://")) {
-        AsyncImage(
-            model = uri,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = modifier.background(PurpleBackground)
-        )
-    } else {
-        AndroidView(
-            modifier = modifier.background(PurpleBackground),
-            factory = { context ->
-                ImageView(context).apply {
-                    scaleType = ImageView.ScaleType.CENTER_CROP
-                    adjustViewBounds = true
-                }
-            },
-            update = { imageView ->
-                try {
-                    imageView.setImageURI(Uri.parse(uri))
-                } catch (_: Exception) {
-                    imageView.setImageDrawable(null)
-                }
-            }
-        )
-    }
+    AsyncImage(
+        model = Uri.parse(uri),
+        contentDescription = null,
+        contentScale = ContentScale.Fit,
+        modifier = modifier.background(PurpleBackground)
+    )
 }
 
 fun isGalleryMediaUri(value: String): Boolean =

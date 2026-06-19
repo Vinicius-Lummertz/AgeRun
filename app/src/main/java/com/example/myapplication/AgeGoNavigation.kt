@@ -1,6 +1,7 @@
 ﻿package com.example.myapplication
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -133,6 +134,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
@@ -186,21 +188,49 @@ val destinations = listOf(
     Destination("eventos", "Eventos", R.drawable.ic_nav_eventos, R.drawable.ic_nav_eventos_active)
 )
 
-val demoModalities = listOf(
-    DirectoryEntry("corrida", "Corrida", "active", "Treinos de rua, pista e provas."),
-    DirectoryEntry("fortalecimento", "Fortalecimento", "active", "Base de forca, mobilidade e estabilidade."),
-    DirectoryEntry("mobilidade", "Mobilidade", "draft", "Sessoes de recuperacao e prevencao.")
-)
-
-val demoGroups = listOf(
-    DirectoryEntry("iniciante", "Iniciantes", "active", "Grupo para alunos em fase inicial."),
-    DirectoryEntry("performance", "Performance", "active", "Treinos focados em evolucao de pace."),
-    DirectoryEntry("longao", "Longao de sabado", "paused", "Organizacao dos treinos longos do fim de semana.")
-)
-
 @Composable
 fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val session = state.authSession
+    val context = LocalContext.current
+    if (session == null) {
+        RealAuthScreen(
+            loading = state.authLoading,
+            message = state.authMessage,
+            onStartLogin = { identifier, onToken -> viewModel.startLogin(identifier, onToken) },
+            onStartLoginResult = { identifier, onResult -> viewModel.startLogin(identifier, onResult) },
+            onVerifyLogin = { identifier, token -> viewModel.verifyLogin(identifier, token) },
+            onRegisterInstructor = { name, email, phone, onToken ->
+                viewModel.registerInstructor(name, email, phone, onToken)
+            },
+            onVerifyInstructor = { email, token, displayName, photoUri, onSuccess, onFailure ->
+                viewModel.verifyInstructor(context, email, token, displayName, photoUri, onSuccess, onFailure)
+            },
+            onStartStudent = { phone, onToken -> viewModel.startStudentFirstAccess(phone, onToken) },
+            onCompleteStudent = { phone, email, nickname, photoUri, token ->
+                viewModel.completeStudentFirstAccess(phone, email, nickname, photoUri, token, context) {}
+            }
+        )
+        return
+    }
+    if (session.role == "student") {
+        StudentPortalApp(
+            state = state,
+            pixKey = state.instructorSettings.pixKey,
+            onProfileSave = { name, uri -> viewModel.saveProfile(context, name, uri) },
+            onSaveCommunityPost = viewModel::saveCommunityPost,
+            onToggleCommunityLike = viewModel::toggleCommunityLike,
+            onAddCommunityComment = { postId, content -> viewModel.addCommunityComment(postId, content) },
+            onReplyCommunityComment = viewModel::replyCommunityComment,
+            onToggleCommunityCommentLike = viewModel::toggleCommunityCommentLike,
+            onShareCommunityPost = viewModel::shareCommunityPost,
+            onSaveWorkoutSession = viewModel::saveWorkoutSession,
+            onRefresh = viewModel::refresh,
+            onUploadMedia = { uri -> viewModel.uploadMedia(context, uri) },
+            onLogout = viewModel::logout
+        )
+        return
+    }
     val navController = rememberNavController()
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
@@ -223,7 +253,18 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                 popExitTransition = { ExitTransition.None }
             ) {
             composable("hub_fit") { HomeScreenV2(state) { navController.navigate(it) } }
-            composable("financeiro") { EarningsScreen() }
+            composable("financeiro") { EarningsScreen(students = state.students, routines = state.routines) }
+            composable("settings") {
+                InstructorSettingsScreen(
+                    profileName = state.authSession?.name.orEmpty(),
+                    profileAvatarUrl = state.authSession?.avatarUrl.orEmpty(),
+                    pixKey = state.instructorSettings.pixKey,
+                    onProfileSave = { name, uri -> viewModel.saveProfile(context, name, uri) },
+                    onPixKeyChange = { viewModel.saveInstructorSettings(state.instructorSettings.copy(pixKey = it)) },
+                    onBack = navController::popBackStack,
+                    onClearLocalData = viewModel::logout
+                )
+            }
             composable("comunidade") {
                 CommunityScreen(
                     posts = state.communityPosts,
@@ -234,7 +275,8 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                     onPostClick = { post -> navController.navigate("community/post/${post.id}/false") },
                     onLike = viewModel::toggleCommunityLike,
                     onComment = { postId -> navController.navigate("community/post/$postId/true") },
-                    onShare = viewModel::shareCommunityPost
+                    onShare = viewModel::shareCommunityPost,
+                    onRefresh = viewModel::refresh
                 )
             }
             composable("eventos") {
@@ -275,12 +317,22 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                 )
             }
             composable("student/new") {
+                val context = LocalContext.current
                 StudentDetailScreen(
                     student = null,
+                    routines = state.routines,
                     onBack = navController::popBackStack,
                     onSave = {
-                        viewModel.saveStudent(it)
-                        navController.popBackStack()
+                        viewModel.saveStudent(it) { saved ->
+                            if (saved.accessCode.isNotBlank()) {
+                                Toast.makeText(
+                                    context,
+                                    "Codigo do aluno: ${saved.accessCode}. Valido por 24h.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                            navController.popBackStack()
+                        }
                     },
                     onDelete = null
                 )
@@ -289,6 +341,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                 val student = state.students.firstOrNull { it.id == entry.arguments?.getString("studentId") }
                 StudentDetailScreen(
                     student = student,
+                    routines = state.routines,
                     onBack = navController::popBackStack,
                     onSave = {
                         viewModel.saveStudent(it)
@@ -372,17 +425,32 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                     onBack = navController::popBackStack,
                     onSave = {
                         viewModel.saveWorkout(it)
+                        navController.popBackStack()
                     },
                     onDelete = null
                 )
             }
             composable("workout/{workoutId}") { entry ->
                 val workout = state.workouts.firstOrNull { it.id == entry.arguments?.getString("workoutId") }
+                WorkoutDetailScreen(
+                    workout = workout,
+                    routines = state.routines,
+                    onBack = navController::popBackStack,
+                    onEdit = { if (workout != null) navController.navigate("workout/${workout.id}/edit") },
+                    onDelete = {
+                        viewModel.deleteWorkout(it)
+                        navController.popBackStack()
+                    }
+                )
+            }
+            composable("workout/{workoutId}/edit") { entry ->
+                val workout = state.workouts.firstOrNull { it.id == entry.arguments?.getString("workoutId") }
                 WorkoutFormScreen(
                     workout = workout,
                     onBack = navController::popBackStack,
                     onSave = {
                         viewModel.saveWorkout(it)
+                        navController.popBackStack()
                     },
                     onDelete = {
                         viewModel.deleteWorkout(it)
@@ -400,7 +468,8 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                     onPostClick = { post -> navController.navigate("community/post/${post.id}/false") },
                     onLike = viewModel::toggleCommunityLike,
                     onComment = { postId -> navController.navigate("community/post/$postId/true") },
-                    onShare = viewModel::shareCommunityPost
+                    onShare = viewModel::shareCommunityPost,
+                    onRefresh = viewModel::refresh
                 )
             }
             composable("community/new/{target}") { entry ->
@@ -483,7 +552,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel()) {
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (currentRoute == "hub_fit") {
-                        TrainingNowBar()
+                        TrainingNowBar(state.trainingNow)
                     }
                     PillBottomBar(
                         currentRoute = currentRoute,

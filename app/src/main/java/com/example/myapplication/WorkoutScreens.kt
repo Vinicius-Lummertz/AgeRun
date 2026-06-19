@@ -198,6 +198,306 @@ fun WorkoutsScreen(
 }
 
 @Composable
+fun WorkoutDetailScreen(
+    workout: Workout?,
+    routines: List<DirectoryEntry>,
+    onBack: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: (String) -> Unit
+) {
+    var selectedTab by remember(workout?.id) { mutableStateOf("Dados") }
+    val linkedRoutines = remember(workout?.id, workout?.name, routines) {
+        if (workout == null) {
+            emptyList()
+        } else {
+            routines.filter { routine ->
+                routine.description.contains(workout.name, ignoreCase = true) ||
+                    routine.description.contains(workout.id, ignoreCase = true)
+            }
+        }
+    }
+    val structureLines = remember(workout?.description) {
+        workoutStructureLines(workout?.description)
+    }
+    val structureSections = remember(workout?.description) {
+        parseWorkoutStructure(workout?.description)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PurpleBackground)
+    ) {
+        WorkoutFlowHeader(
+            breadcrumb = "Treinos",
+            title = workout?.name ?: "Treino",
+            onBack = onBack,
+            readyLabel = if (workout != null) "Editar" else null,
+            onReady = if (workout != null) onEdit else null
+        )
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (workout == null) {
+                item { EmptyRoutineBuilderState("Treino nao encontrado.") }
+                return@LazyColumn
+            }
+
+            item {
+                WorkoutDetailTabs(
+                    selected = selectedTab,
+                    onSelected = { selectedTab = it }
+                )
+            }
+
+            when (selectedTab) {
+                "Dados" -> {
+                    item {
+                        WorkoutDetailSection(title = "Dados gerais") {
+                            WorkoutDetailRow("Nome", workout.name)
+                            WorkoutDetailRow("Status", workoutStatusLabel(workout.status))
+                            WorkoutDetailRow("Tipo", workout.iconName?.replace('_', ' ')?.ifBlank { "Treino" } ?: "Treino")
+                        }
+                    }
+                    item {
+                        TextButton(
+                            onClick = { onDelete(workout.id) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Excluir treino", color = Color(0xFFFFB3BE), fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                "Estrutura" -> {
+                    item {
+                        WorkoutDetailSection(title = "Estrutura do treino") {
+                            if (structureSections.isEmpty() && structureLines.isEmpty()) {
+                                WorkoutDetailMutedText("Nenhuma estrutura personalizada salva para este treino.")
+                            } else if (structureSections.isNotEmpty()) {
+                                WorkoutStructureTimeline(structureSections)
+                            } else {
+                                structureLines.forEach { line ->
+                                    WorkoutStructureLine(line)
+                                }
+                            }
+                        }
+                    }
+                }
+                else -> {
+                    item {
+                        WorkoutDetailSection(title = "Onde este treino esta") {
+                            if (linkedRoutines.isEmpty()) {
+                                WorkoutDetailMutedText("Este treino ainda nao aparece em nenhuma rotina.")
+                            } else {
+                                linkedRoutines.forEach { routine ->
+                                    WorkoutRoutineLinkRow(routine)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun workoutStructureLines(description: String?): List<String> {
+    val normalized = description?.trim().orEmpty()
+    if (normalized.isBlank()) return emptyList()
+    if (normalized.equals("Treino personalizado", ignoreCase = true)) return emptyList()
+    if (normalized.equals("Treino sem estrutura definida", ignoreCase = true)) return emptyList()
+    return normalized
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .toList()
+}
+
+data class WorkoutStructureSection(
+    val label: String,
+    val steps: List<WorkoutStructureStep>
+)
+
+data class WorkoutStructureStep(
+    val name: String,
+    val value: String,
+    val reps: String
+)
+
+fun parseWorkoutStructure(description: String?): List<WorkoutStructureSection> {
+    return workoutStructureLines(description).mapNotNull { line ->
+        val parts = line.split(":", limit = 2)
+        if (parts.size != 2 || !parts[0].trim().startsWith("Secao")) return@mapNotNull null
+        val steps = parts[1]
+            .split(";")
+            .mapNotNull { rawStep ->
+                val stepParts = rawStep.trim().split(":", limit = 2)
+                if (stepParts.size != 2) return@mapNotNull null
+                val valueParts = stepParts[1].trim().split(" x", limit = 2)
+                WorkoutStructureStep(
+                    name = stepParts[0].trim(),
+                    value = valueParts.getOrNull(0)?.trim().orEmpty(),
+                    reps = valueParts.getOrNull(1)?.trim()?.let { "${it}x" }.orEmpty()
+                )
+            }
+        if (steps.isEmpty()) null else WorkoutStructureSection(parts[0].trim(), steps)
+    }
+}
+
+@Composable
+fun WorkoutDetailTabs(selected: String, onSelected: (String) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("Dados", "Estrutura", "Rotinas").forEach { tab ->
+            SlimFilterBadge(
+                label = tab,
+                selected = selected == tab,
+                onClick = { onSelected(tab) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+fun WorkoutDetailSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = PurpleSurface,
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            content()
+        }
+    }
+}
+
+@Composable
+fun WorkoutDetailRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Text(label, color = Color.White.copy(alpha = .58f), fontSize = 12.sp, modifier = Modifier.width(92.dp))
+        Text(value.ifBlank { "Nao informado" }, color = Color.White, fontSize = 14.sp, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+fun WorkoutDetailMutedText(text: String) {
+    Text(text, color = Color.White.copy(alpha = .60f), fontSize = 13.sp, lineHeight = 19.sp)
+}
+
+@Composable
+fun WorkoutStructureTimeline(sections: List<WorkoutStructureSection>) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        sections.forEach { section ->
+            Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(section.label, color = Lime, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Column(Modifier.fillMaxWidth()) {
+                        section.steps.forEachIndexed { index, step ->
+                            WorkoutStructureStepRow(
+                                step = step,
+                                isLast = index == section.steps.lastIndex
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun WorkoutStructureStepRow(step: WorkoutStructureStep, isLast: Boolean) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(workoutStructureStepColor(step.value)),
+                contentAlignment = Alignment.Center
+            ) {
+                WorkoutStructureStepMark(step.value)
+            }
+            if (!isLast) {
+                Box(
+                    modifier = Modifier
+                        .width(2.dp)
+                        .height(42.dp)
+                        .background(workoutStructureStepColor(step.value).copy(alpha = .42f))
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .padding(start = 12.dp, bottom = if (isLast) 2.dp else 14.dp)
+                .weight(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .background(PurpleSurface)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                step.name.ifBlank { "Objetivo" },
+                modifier = Modifier.weight(1f),
+                color = Color.White,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(step.value, color = workoutStructureStepColor(step.value), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                if (step.reps.isNotBlank()) {
+                    Text(step.reps, color = workoutStructureStepColor(step.value), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun WorkoutStructureStepMark(value: String) {
+    when {
+        value.contains("km", ignoreCase = true) -> Text("KM", color = PurpleDeep, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        value.contains("desc", ignoreCase = true) -> Box(Modifier.size(18.dp)) {
+            Box(Modifier.align(Alignment.Center).width(16.dp).height(4.dp).clip(RoundedCornerShape(4.dp)).background(PurpleDeep))
+        }
+        else -> Icon(Icons.Outlined.Schedule, contentDescription = null, tint = PurpleDeep, modifier = Modifier.size(18.dp))
+    }
+}
+
+fun workoutStructureStepColor(value: String): Color = when {
+    value.contains("km", ignoreCase = true) -> Color(0xFF8EDBFF)
+    value.contains("desc", ignoreCase = true) -> Color(0xFFFFD166)
+    else -> Lime
+}
+
+@Composable
+fun WorkoutStructureLine(text: String) {
+    WorkoutStructureStepRow(
+        step = WorkoutStructureStep(name = text, value = "", reps = ""),
+        isLast = true
+    )
+}
+
+@Composable
+fun WorkoutRoutineLinkRow(routine: DirectoryEntry) {
+    Surface(color = PurpleBackground, shape = RoundedCornerShape(12.dp)) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Image(painterResource(R.drawable.ic_option_modalidades), contentDescription = null, modifier = Modifier.size(22.dp))
+            Column(Modifier.padding(start = 10.dp).weight(1f)) {
+                Text(routine.name, color = Color.White, fontWeight = FontWeight.SemiBold)
+                Text(directoryStatusLabel(routine.status), color = Lime, fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
 fun RoutinesScreen(
     routines: List<DirectoryEntry>,
     onBack: () -> Unit,
@@ -273,11 +573,7 @@ fun RoutineBuilderScreen(
     var name by remember(routine?.id) { mutableStateOf(routine?.name.orEmpty()) }
     var price by remember(routine?.id) { mutableStateOf(extractRoutinePrice(routine?.description.orEmpty())) }
     var days by remember(routine?.id) {
-        mutableStateOf(
-            listOf(
-                RoutineDayDraft(1, workoutIds = workouts.firstOrNull()?.id?.let { listOf(it) } ?: emptyList())
-            )
-        )
+        mutableStateOf(parseRoutineDayDrafts(routine?.description.orEmpty(), workouts).ifEmpty { listOf(RoutineDayDraft(1)) })
     }
 
     BackHandler { if (step > 0) step-- else onBack() }
@@ -365,16 +661,11 @@ fun RoutineDaysStep(
         contentPadding = PaddingValues(bottom = 96.dp)
     ) {
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                days.forEach { day ->
-                    SlimFilterBadge(
-                        modifier = Modifier.weight(1f),
-                        label = "Dia ${day.number}",
-                        selected = selectedDay == day.number,
-                        onClick = { selectedDay = day.number }
-                    )
-                }
-            }
+            SegmentedFilterBar(
+                options = days.map { "Dia ${it.number}" },
+                selected = "Dia $selectedDay",
+                onSelected = { label -> selectedDay = label.substringAfter("Dia ").toIntOrNull() ?: selectedDay }
+            )
         }
         item {
             RoutineRestPicker(
@@ -450,18 +741,21 @@ fun RoutineDaysStep(
 @Composable
 fun RoutineRestPicker(restDays: Int, onChange: (Int) -> Unit) {
     Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Descanso apos este dia", color = Color.White, fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(0, 1, 2, 3).forEach { option ->
-                    SlimFilterBadge(
-                        modifier = Modifier.weight(1f),
-                        label = if (option == 0) "Sem" else "${option}d",
-                        selected = restDays == option,
-                        onClick = { onChange(option) }
-                    )
+        Row(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Descanso apos este dia", color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Surface(
+                modifier = Modifier.size(48.dp).clickable { onChange((restDays + 1) % 5) },
+                color = Lime,
+                shape = CircleShape
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(restDays.toString(), color = PurpleDeep, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 }
             }
+            Text("dias", color = Color.White.copy(alpha = .72f), fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp))
         }
     }
 }
@@ -476,8 +770,17 @@ fun RoutineSummaryStep(
     onSave: () -> Unit,
     onDelete: (() -> Unit)?
 ) {
+    val includedWorkoutCount = days.sumOf { it.workoutIds.size }
+    val minimumMinutes = days.flatMap { it.workoutIds }.sumOf { id -> minimumWorkoutMinutes(workouts.firstOrNull { it.id == id }) }
+    val minimumDistanceKm = days.flatMap { it.workoutIds }.sumOf { id -> minimumWorkoutDistanceKm(workouts.firstOrNull { it.id == id }) }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         FormTextField(price, { next -> onPriceChange(next.filter { it.isDigit() || it == ',' || it == '.' }) }, "Valor geral da rotina")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            RoutineMetricCard("Treinos inclusos", includedWorkoutCount.toString(), Modifier.weight(1f))
+            RoutineMetricCard("Tempo minimo", "${minimumMinutes.cleanRoutineNumber()} min", Modifier.weight(1f))
+            RoutineMetricCard("Distancia min.", "${minimumDistanceKm.cleanRoutineNumber()} km", Modifier.weight(1f))
+        }
         Surface(color = PurpleBackground, shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(name.ifBlank { "Rotina" }, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -502,6 +805,16 @@ fun RoutineSummaryStep(
 }
 
 @Composable
+fun RoutineMetricCard(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(color = PurpleBackground, shape = RoundedCornerShape(12.dp), modifier = modifier) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(label, color = Color.White.copy(alpha = .58f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(value, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
 fun EmptyRoutineBuilderState(message: String) {
     Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
         Text(message, Modifier.fillMaxWidth().padding(16.dp), color = Color.White.copy(alpha = .72f))
@@ -518,6 +831,46 @@ fun routineDescriptionSummary(price: String, days: List<RoutineDayDraft>, workou
     }
     return lines.joinToString("\n")
 }
+
+fun parseRoutineDayDrafts(description: String, workouts: List<Workout>): List<RoutineDayDraft> {
+    if (description.isBlank()) return emptyList()
+    return description.lineSequence()
+        .map { it.trim() }
+        .filter { it.startsWith("Dia ") }
+        .mapNotNull { line ->
+            val number = line.substringAfter("Dia ").substringBefore(":").toIntOrNull() ?: return@mapNotNull null
+            val workoutText = line.substringAfter(":", "").substringBefore("|").trim()
+            val rest = line.substringAfter("descanso", "0").filter { it.isDigit() }.toIntOrNull() ?: 0
+            val ids = workoutText
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotBlank() && !it.equals("sem treinos", ignoreCase = true) }
+                .mapNotNull { name -> workouts.firstOrNull { it.name.equals(name, ignoreCase = true) }?.id }
+            RoutineDayDraft(number = number, workoutIds = ids, restDaysAfter = rest.coerceIn(0, 4))
+        }
+        .toList()
+}
+
+fun minimumWorkoutMinutes(workout: Workout?): Double =
+    parseWorkoutStructure(workout?.description).flatMap { it.steps }.sumOf { step ->
+        if (step.value.contains("min", ignoreCase = true) && !step.value.contains("desc", ignoreCase = true)) {
+            Regex("""\d+([.,]\d+)?""").find(step.value)?.value?.replace(',', '.')?.toDoubleOrNull() ?: 0.0
+        } else {
+            0.0
+        }
+    }
+
+fun minimumWorkoutDistanceKm(workout: Workout?): Double =
+    parseWorkoutStructure(workout?.description).flatMap { it.steps }.sumOf { step ->
+        if (step.value.contains("km", ignoreCase = true)) {
+            Regex("""\d+([.,]\d+)?""").find(step.value)?.value?.replace(',', '.')?.toDoubleOrNull() ?: 0.0
+        } else {
+            0.0
+        }
+    }
+
+fun Double.cleanRoutineNumber(): String =
+    if (this % 1.0 == 0.0) toInt().toString() else "%.1f".format(this)
 
 fun extractRoutinePrice(description: String): String =
     description.lineSequence()
@@ -601,7 +954,7 @@ fun WorkoutFormScreen(
                         Workout(
                             id = workout?.id.orEmpty(),
                             name = name.trim(),
-                            description = workout?.description ?: "Treino personalizado",
+                            description = workoutSectionsSummary(sections),
                             iconName = workout?.iconName,
                             status = "active"
                         )
@@ -650,7 +1003,7 @@ enum class WorkoutGoalType {
 
 data class WorkoutGoal(
     val id: Int,
-    val name: String = "Novo objetivo",
+    val name: String = "",
     val value: String = "20",
     val reps: Int = 1,
     val type: WorkoutGoalType = WorkoutGoalType.Tempo,
@@ -867,7 +1220,7 @@ fun WorkoutBuilderStep(
                 val targetSection = sections.getOrNull(targetIndex) ?: WorkoutBuilderSection(1, selected = true)
                 val goal = WorkoutGoal(
                     id = ((sections.flatMap { it.goals }.maxOfOrNull { it.id } ?: 0) + 1),
-                    name = "Novo objetivo",
+                    name = "",
                     value = draftValue.ifBlank { defaultWorkoutDraftValue(draftType) },
                     reps = draftReps,
                     type = draftType
@@ -1321,6 +1674,17 @@ fun formattedWorkoutGoalValue(goal: WorkoutGoal): String {
         WorkoutGoalType.Tempo -> "$raw min"
         WorkoutGoalType.Distancia -> "$raw km"
         WorkoutGoalType.Repouso -> "$raw min desc"
+    }
+}
+
+fun workoutSectionsSummary(sections: List<WorkoutBuilderSection>): String {
+    val activeSections = sections.filter { it.goals.isNotEmpty() }
+    if (activeSections.isEmpty()) return ""
+    return activeSections.joinToString("\n") { section ->
+        val goals = section.goals.joinToString("; ") { goal ->
+            "${goal.name}: ${formattedWorkoutGoalValue(goal)} x${goal.reps}"
+        }
+        "Secao ${section.number}: $goals"
     }
 }
 

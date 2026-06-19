@@ -6,12 +6,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.data.AgeGoRepository
 import com.example.myapplication.data.Announcement
+import com.example.myapplication.data.AuthRequiredException
+import com.example.myapplication.data.AuthSession
 import com.example.myapplication.data.CommunityPost
 import com.example.myapplication.data.CommunityComment
 import com.example.myapplication.data.DirectoryItem
+import com.example.myapplication.data.InstructorSettings
 import com.example.myapplication.data.RepositoryProvider
 import com.example.myapplication.data.Student
+import com.example.myapplication.data.TrainingNowUser
 import com.example.myapplication.data.Workout
+import com.example.myapplication.data.WorkoutSessionPayload
 import com.example.myapplication.data.Event
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,6 +26,10 @@ import kotlinx.coroutines.launch
 
 data class AgeGoUiState(
     val isLoading: Boolean = true,
+    val authSession: AuthSession? = null,
+    val authLoading: Boolean = false,
+    val authMessage: String? = null,
+    val instructorSettings: InstructorSettings = InstructorSettings(),
     val students: List<Student> = emptyList(),
     val workouts: List<Workout> = emptyList(),
     val announcements: List<Announcement> = emptyList(),
@@ -28,7 +37,7 @@ data class AgeGoUiState(
     val events: List<Event> = emptyList(),
     val groups: List<DirectoryItem> = emptyList(),
     val routines: List<DirectoryItem> = emptyList(),
-    val isDemo: Boolean = false,
+    val trainingNow: List<TrainingNowUser> = emptyList(),
     val message: String? = null
 )
 
@@ -39,36 +48,208 @@ class AgeGoViewModel(
     val uiState: StateFlow<AgeGoUiState> = _uiState.asStateFlow()
 
     init {
-        refresh()
+        viewModelScope.launch {
+            val session = repository.restoreSession()
+            _uiState.update { if (session == null) it.copy(isLoading = false, authSession = null) else emptyDataState(session).copy(isLoading = false) }
+            if (session != null) refresh()
+        }
+    }
+
+    fun startLogin(identifier: String, onToken: (String) -> Unit = {}) {
+        startLogin(identifier) { token, _ -> onToken(token) }
+    }
+
+    fun startLogin(identifier: String, onResult: (String, String) -> Unit) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(authLoading = true, authMessage = null) }
+            runCatching { repository.startLogin(identifier) }
+                .onSuccess { result ->
+                    _uiState.update { it.copy(authLoading = false, authMessage = result.message.ifBlank { "Token enviado" }) }
+                    onResult(result.verificationToken, result.nextStep)
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(authLoading = false, authMessage = error.message ?: "Nao foi possivel gerar o token") }
+                }
+        }
+    }
+
+    fun verifyLogin(identifier: String, token: String, onSuccess: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(authLoading = true, authMessage = null) }
+            runCatching { repository.verifyLogin(identifier, token) }
+                .onSuccess { session ->
+                    _uiState.value = emptyDataState(session).copy(isLoading = true, authLoading = false, authMessage = null)
+                    refresh()
+                    onSuccess(session.role)
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(authLoading = false, authMessage = error.message ?: "Nao foi possivel entrar") }
+                }
+        }
+    }
+
+    fun registerInstructor(name: String, email: String, phone: String, onToken: (String) -> Unit) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(authLoading = true, authMessage = null) }
+            runCatching { repository.registerInstructor(name, email, phone) }
+                .onSuccess { result ->
+                    _uiState.update { it.copy(authLoading = false, authMessage = result.message.ifBlank { "Token enviado" }) }
+                    onToken(result.verificationToken)
+                }
+                .onFailure { error -> _uiState.update { it.copy(authLoading = false, authMessage = error.message ?: "Cadastro nao concluido") } }
+        }
+    }
+
+    fun verifyInstructor(context: Context, email: String, token: String, displayName: String, photoUri: Uri?, onSuccess: () -> Unit, onFailure: () -> Unit = {}) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(authLoading = true, authMessage = null) }
+            runCatching { repository.verifyInstructor(context.contentResolver, email, token, displayName, photoUri) }
+                .onSuccess { session ->
+                    _uiState.value = emptyDataState(session).copy(isLoading = true, authLoading = false, authMessage = null)
+                    refresh()
+                    onSuccess()
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(authLoading = false, authMessage = "${error.message ?: "Token invalido"}. Entre novamente para gerar um novo codigo.") }
+                    onFailure()
+                }
+        }
+    }
+
+    fun startStudentFirstAccess(phone: String, onToken: (String) -> Unit) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(authLoading = true, authMessage = null) }
+            runCatching { repository.startStudentFirstAccess(phone) }
+                .onSuccess { result ->
+                    _uiState.update { it.copy(authLoading = false, authMessage = result.message.ifBlank { "Token enviado" }) }
+                    onToken(result.verificationToken)
+                }
+                .onFailure { error -> _uiState.update { it.copy(authLoading = false, authMessage = error.message ?: "Telefone nao encontrado") } }
+        }
+    }
+
+    fun completeStudentFirstAccess(
+        phone: String,
+        email: String,
+        nickname: String,
+        photoUri: Uri?,
+        token: String,
+        context: Context,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(authLoading = true, authMessage = null) }
+            runCatching { repository.completeStudentFirstAccess(context.contentResolver, phone, email, nickname, photoUri, token) }
+                .onSuccess { session ->
+                    _uiState.value = emptyDataState(session).copy(isLoading = true, authLoading = false, authMessage = null)
+                    refresh()
+                    onSuccess()
+                }
+                .onFailure { error -> _uiState.update { it.copy(authLoading = false, authMessage = error.message ?: "Primeiro acesso nao concluido") } }
+        }
+    }
+
+    fun logout() {
+        viewModelScope.launch {
+            repository.clearSession()
+            _uiState.value = AgeGoUiState(isLoading = false)
+        }
     }
 
     fun refresh() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            val data = repository.loadDashboard()
-            _uiState.value = AgeGoUiState(
-                isLoading = false,
-                students = data.students,
-                workouts = data.workouts,
-                announcements = data.announcements,
-                communityPosts = data.communityPosts,
-                events = data.events,
-                groups = data.groups,
-                routines = data.routines,
-                isDemo = data.isDemo,
-                message = data.message
-            )
+            runCatching {
+                if (_uiState.value.authSession?.role == "student") {
+                    runCatching { repository.sendPresence() }
+                }
+                val data = repository.loadDashboard()
+                val settings = if (_uiState.value.authSession?.role == "instructor") {
+                    runCatching { repository.loadSettings() }.getOrElse { _uiState.value.instructorSettings }
+                } else {
+                    _uiState.value.instructorSettings
+                }
+                _uiState.update { current -> current.copy(
+                    isLoading = false,
+                    students = data.students,
+                    workouts = data.workouts,
+                    announcements = data.announcements,
+                    communityPosts = data.communityPosts,
+                    events = data.events,
+                    groups = data.groups,
+                    routines = data.routines,
+                    trainingNow = data.trainingNow,
+                    message = data.message,
+                    instructorSettings = settings
+                ) }
+            }.onFailure { error ->
+                if (error is AuthRequiredException) {
+                    repository.clearSession()
+                    _uiState.value = AgeGoUiState(
+                        isLoading = false,
+                        authSession = null,
+                        authMessage = error.message ?: "Sessao expirada. Entre novamente."
+                    )
+                    return@launch
+                }
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        students = emptyList(),
+                        workouts = emptyList(),
+                        announcements = emptyList(),
+                        communityPosts = emptyList(),
+                        events = emptyList(),
+                        groups = emptyList(),
+                        routines = emptyList(),
+                        trainingNow = emptyList(),
+                        message = error.message ?: "Nao foi possivel carregar dados"
+                    )
+                }
+            }
         }
     }
 
-    fun saveStudent(student: Student) {
+    fun saveProfile(context: Context, name: String, photoUri: Uri?) {
         viewModelScope.launch {
-            val saved = repository.saveStudent(student)
-            _uiState.update { state ->
-                val normalized = saved.copy(status = saved.status.ifBlank { "active" })
-                val exists = state.students.any { it.id == normalized.id }
-                state.copy(students = if (exists) state.students.map { if (it.id == normalized.id) normalized else it } else listOf(normalized) + state.students)
-            }
+            runCatching { repository.saveProfile(context.contentResolver, name, photoUri) }
+                .onSuccess { session ->
+                    _uiState.update { it.copy(authSession = session, message = "Perfil atualizado") }
+                    refresh()
+                }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar perfil") } }
+        }
+    }
+
+    fun saveInstructorSettings(settings: InstructorSettings) {
+        viewModelScope.launch {
+            runCatching { repository.saveSettings(settings) }
+                .onSuccess { saved -> _uiState.update { it.copy(instructorSettings = saved) } }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar configuracoes") } }
+        }
+    }
+
+    fun saveStudent(student: Student, onSaved: (Student) -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { repository.saveStudent(student) }
+                .onSuccess { saved ->
+                    _uiState.update { state ->
+                        val normalized = saved.copy(status = saved.status.ifBlank { "active" })
+                        val exists = state.students.any { it.id == normalized.id }
+                        state.copy(
+                            students = if (exists) state.students.map { if (it.id == normalized.id) normalized else it } else listOf(normalized) + state.students,
+                            message = if (normalized.accessCode.isNotBlank()) {
+                                "Codigo do aluno: ${normalized.accessCode}. Valido por 24h."
+                            } else {
+                                "Aluno salvo"
+                            }
+                        )
+                    }
+                    onSaved(saved)
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar aluno") }
+                }
         }
     }
 
@@ -149,7 +330,12 @@ class AgeGoViewModel(
 
     fun saveCommunityPost(post: CommunityPost) {
         val tempId = "local-${java.util.UUID.randomUUID()}"
-        val localPost = post.copy(id = tempId)
+        val session = _uiState.value.authSession
+        val localPost = post.copy(
+            id = tempId,
+            authorName = session?.name?.ifBlank { "Voce" } ?: "Voce",
+            authorAvatarUrl = session?.avatarUrl.orEmpty()
+        )
         _uiState.update { state -> state.copy(communityPosts = listOf(localPost) + state.communityPosts) }
         viewModelScope.launch {
             val normalized = repository.saveCommunityPost(post)
@@ -189,7 +375,8 @@ class AgeGoViewModel(
                             comments = post.comments + 1,
                             commentThreads = post.commentThreads + CommunityComment(
                                 id = java.util.UUID.randomUUID().toString(),
-                                authorName = "Voce",
+                                authorName = state.authSession?.name?.ifBlank { "Voce" } ?: "Voce",
+                                authorAvatarUrl = state.authSession?.avatarUrl.orEmpty(),
                                 content = content
                             )
                         )
@@ -213,7 +400,8 @@ class AgeGoViewModel(
                                 commentId,
                                 CommunityComment(
                                     id = java.util.UUID.randomUUID().toString(),
-                                    authorName = "Voce",
+                                    authorName = state.authSession?.name?.ifBlank { "Voce" } ?: "Voce",
+                                    authorAvatarUrl = state.authSession?.avatarUrl.orEmpty(),
                                     content = content
                                 )
                             )
@@ -254,7 +442,32 @@ class AgeGoViewModel(
 
     suspend fun uploadMedia(context: Context, uri: Uri): String =
         repository.uploadMedia(context.contentResolver, uri)
+
+    fun saveWorkoutSession(session: WorkoutSessionPayload, onSaved: () -> Unit = {}) {
+        viewModelScope.launch {
+            runCatching { repository.saveWorkoutSession(session) }
+                .onSuccess {
+                    _uiState.update { state -> state.copy(message = "Treino salvo") }
+                    onSaved()
+                    refresh()
+                }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar treino") } }
+        }
+    }
 }
+
+private fun emptyDataState(session: AuthSession) = AgeGoUiState(
+    isLoading = false,
+    authSession = session,
+    students = emptyList(),
+    workouts = emptyList(),
+    announcements = emptyList(),
+    communityPosts = emptyList(),
+    events = emptyList(),
+    groups = emptyList(),
+    routines = emptyList(),
+    trainingNow = emptyList()
+)
 
 private fun List<CommunityComment>.addReplyToComment(
     commentId: String,

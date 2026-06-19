@@ -9,9 +9,14 @@ data class Student(
     val name: String,
     val email: String = "",
     val phone: String = "",
+    val avatarUrl: String = "",
     val routine: String = "",
     @SerialName("plan_name") val planName: String = "Sem plano",
-    val status: String = "active"
+    val status: String = "active",
+    @SerialName("billingDay") val billingDay: Int = 5,
+    @SerialName("monthlyFee") val monthlyFee: String = "",
+    val accessCode: String = "",
+    val accessCodeExpiresAt: String = ""
 )
 
 @Serializable
@@ -54,7 +59,8 @@ data class CommunityPost(
     val title: String = "",
     val content: String,
     val target: String = "groups",
-    @SerialName("authorName") val authorName: String = "AgeGo",
+    @SerialName("authorName") val authorName: String = "Usuario",
+    @SerialName("authorAvatarUrl") val authorAvatarUrl: String = "",
     @SerialName("linkedWorkoutId") val linkedWorkoutId: String? = null,
     @SerialName("pollOptions") val pollOptions: List<String> = emptyList(),
     @SerialName("commentThreads") val commentThreads: List<CommunityComment> = emptyList(),
@@ -74,10 +80,19 @@ data class CommunityPost(
 data class CommunityComment(
     val id: String,
     @SerialName("authorName") val authorName: String,
+    @SerialName("authorAvatarUrl") val authorAvatarUrl: String = "",
     val content: String,
     val liked: Boolean = false,
     val likes: Int = 0,
     val replies: List<CommunityComment> = emptyList()
+)
+
+@Serializable
+data class TrainingNowUser(
+    val id: String,
+    val name: String,
+    val avatarUrl: String = "",
+    val lastSeenAt: String = ""
 )
 
 @Serializable
@@ -98,6 +113,6 @@ data class DashboardData(
     val groups: List<DirectoryItem> = emptyList(),
     val routines: List<DirectoryItem> = emptyList(),
     val communityPosts: List<CommunityPost> = emptyList(),
-    val isDemo: Boolean = false,
+    val trainingNow: List<TrainingNowUser> = emptyList(),
     val message: String? = null
 )

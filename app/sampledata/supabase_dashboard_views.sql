@@ -14,7 +14,7 @@ SELECT
   sp.id,
   sp.user_id,
   sp.instructor_id,
-  u.name,
+  u.name,con
   u.email,
   COALESCE(u.phone, '') AS phone,
   u.avatar_url,

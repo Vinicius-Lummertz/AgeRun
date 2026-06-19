@@ -44,6 +44,7 @@ android {
         buildConfigField("String", "SUPABASE_URL", "\"${configValue("SUPABASE_URL")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${configValue("SUPABASE_ANON_KEY")}\"")
         buildConfigField("String", "AGEGO_API_URL", "\"${configValue("AGEGO_API_URL").ifBlank { "http://10.0.2.2:3333" }}\"")
+        buildConfigField("String", "APP_GATE_KEY", "\"${configValue("APP_GATE_KEY")}\"")
     }
 
     buildFeatures {

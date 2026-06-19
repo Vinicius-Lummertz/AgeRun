@@ -1,6 +1,14 @@
 ﻿package com.example.myapplication
 
 import android.os.Bundle
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -129,6 +137,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -138,6 +147,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -197,7 +207,18 @@ fun LegacyWorkoutsScreen(
 }
 
 @Composable
-fun EarningsScreen() {
+fun EarningsScreen(students: List<Student>, routines: List<DirectoryEntry>) {
+    val context = LocalContext.current
+    val billableStudents = students.filter { it.status != "inactive" }
+    val monthlyTotal = billableStudents.sumOf { parseMoneyValue(studentRoutineMonthlyFee(it, routines)) }
+    val today = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH).coerceAtMost(28)
+    val dueToday = billableStudents.filter { it.billingDay == today }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) showTestNotification(context)
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -211,24 +232,124 @@ fun EarningsScreen() {
             Card(colors = CardDefaults.cardColors(containerColor = Lime), shape = RoundedCornerShape(18.dp)) {
                 Column(Modifier.fillMaxWidth().padding(20.dp)) {
                     Text("Receita prevista", color = LimeMuted)
-                    Text("R$ 0,00", color = PurpleDeep, fontSize = 34.sp, fontWeight = FontWeight.Bold)
-                    Text("Os valores serão calculados pelos planos ativos.", color = PurpleDeep.copy(alpha = .75f), fontSize = 13.sp)
+                    Text(formatCurrency(monthlyTotal), color = PurpleDeep, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+                    Text("${billableStudents.size} clientes ativos no ciclo mensal.", color = PurpleDeep.copy(alpha = .75f), fontSize = 13.sp)
                 }
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FinancialCard("Em dia", "0", Color(0xFF4CAF50), Modifier.weight(1f))
-                FinancialCard("A receber", "0", Color(0xFFFFC107), Modifier.weight(1f))
+            Button(
+                onClick = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    } else {
+                        showTestNotification(context)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = PurpleSurface, contentColor = Color.White),
+                shape = RoundedCornerShape(50)
+            ) {
+                Icon(Icons.Outlined.Notifications, contentDescription = null, tint = Lime)
+                Text("Testar notificação", Modifier.padding(start = 8.dp), fontWeight = FontWeight.Bold)
             }
         }
-        item { Text("Movimentações", fontSize = 20.sp, fontWeight = FontWeight.SemiBold) }
         item {
-            Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
-                Text("Nenhuma movimentação encontrada.", Modifier.fillMaxWidth().padding(18.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                FinancialCard("Em dia", students.count { it.status == "active" }.toString(), Color(0xFF4CAF50), Modifier.weight(1f))
+                FinancialCard("A receber", dueToday.size.toString(), Color(0xFFFFC107), Modifier.weight(1f))
+            }
+        }
+        item { Text("Cobranças", fontSize = 20.sp, fontWeight = FontWeight.SemiBold) }
+        if (billableStudents.isEmpty()) {
+            item {
+                Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
+                    Text("Nenhuma cobrança prevista.", Modifier.fillMaxWidth().padding(18.dp))
+                }
+            }
+        } else {
+            items(billableStudents.sortedBy { it.billingDay }) { student ->
+                BillingMovementRow(
+                    student = student,
+                    monthlyFee = studentRoutineMonthlyFee(student, routines),
+                    dueToday = student.billingDay == today
+                )
             }
         }
     }
+}
+
+@Composable
+fun BillingMovementRow(student: Student, monthlyFee: String, dueToday: Boolean) {
+    Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(42.dp).clip(CircleShape).background(if (dueToday) Color(0xFFFFC107) else PurpleDeep),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Outlined.Payments, contentDescription = null, tint = if (dueToday) PurpleDeep else Lime)
+            }
+            Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                Text(student.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text("Vence dia ${student.billingDay}", color = Color.White.copy(alpha = .62f), fontSize = 12.sp)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(formatMoneyLabel(monthlyFee), color = Color.White, fontWeight = FontWeight.Bold)
+                if (dueToday) Text("Cobrar hoje", color = Color(0xFFFFD166), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+fun parseMoneyValue(value: String): Double =
+    value.replace("R$", "")
+        .replace(".", "")
+        .replace(",", ".")
+        .trim()
+        .toDoubleOrNull() ?: 0.0
+
+fun studentRoutineMonthlyFee(student: Student, routines: List<DirectoryEntry>): String {
+    val routine = routines.firstOrNull {
+        it.name.equals(student.routine, ignoreCase = true) ||
+            it.name.equals(student.planName, ignoreCase = true)
+    }
+    return routine?.description?.let { extractRoutinePrice(it) }.orEmpty().ifBlank { student.monthlyFee }
+}
+
+fun formatCurrency(value: Double): String =
+    "R$ " + java.text.NumberFormat.getNumberInstance(java.util.Locale("pt", "BR")).apply {
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
+    }.format(value)
+
+fun showTestNotification(context: Context) {
+    val channelId = "agego_billing_tests"
+    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(
+            channelId,
+            "Testes de cobrança",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Notificações locais para testar lembretes de cobrança."
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        android.app.Notification.Builder(context, channelId)
+    } else {
+        android.app.Notification.Builder(context)
+    }
+        .setSmallIcon(R.drawable.ic_nav_financeiro)
+        .setContentTitle("AgeGo")
+        .setContentText("Teste de notificação de cobrança funcionando.")
+        .setAutoCancel(true)
+        .build()
+
+    manager.notify(5001, notification)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

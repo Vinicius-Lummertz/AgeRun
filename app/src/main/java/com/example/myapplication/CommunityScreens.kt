@@ -174,11 +174,19 @@ fun CommunityScreen(
     onPostClick: (CommunityPost) -> Unit,
     onLike: (String) -> Unit,
     onComment: (String) -> Unit,
-    onShare: (String) -> Unit
+    onShare: (String) -> Unit,
+    onRefresh: () -> Unit
 ) {
-    val storyAuthors = remember(posts) {
-        posts.map { it.authorName }.distinct().ifEmpty { listOf("Voce", "Marina", "Coach Ana") }
-    }
+        val storyAuthors = remember(posts) {
+            posts
+                .filter { it.authorName.isNotBlank() }
+                .distinctBy { it.authorName }
+                .map { it.authorName to it.authorAvatarUrl }
+        }
+    val listState = rememberLazyListState()
+    val density = LocalDensity.current
+    val refreshThresholdPx = remember(density) { with(density) { 96.dp.toPx() } }
+    var refreshArmed by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize().background(PurpleBackground)) {
         Column(Modifier.fillMaxSize()) {
@@ -192,8 +200,8 @@ fun CommunityScreen(
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     contentPadding = PaddingValues(end = 4.dp)
                 ) {
-                    items(storyAuthors) { author ->
-                        CommunityStoryBubble(author)
+                    items(storyAuthors) { (author, avatarUrl) ->
+                        CommunityStoryBubble(author, avatarUrl)
                     }
                 }
             }
@@ -206,10 +214,53 @@ fun CommunityScreen(
                 shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
             ) {
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(loading) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                var previousY = down.position.y
+                                var pullDistance = 0f
+                                var triggered = false
+                                do {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull() ?: break
+                                    val deltaY = change.position.y - previousY
+                                    previousY = change.position.y
+                                    val atTop = listState.firstVisibleItemIndex == 0 &&
+                                        listState.firstVisibleItemScrollOffset == 0
+                                    if (atTop && deltaY > 0f && !loading) {
+                                        pullDistance += deltaY
+                                        refreshArmed = pullDistance >= refreshThresholdPx
+                                        if (!triggered && refreshArmed) {
+                                            triggered = true
+                                            onRefresh()
+                                        }
+                                    }
+                                } while (change.pressed)
+                                refreshArmed = false
+                            }
+                        },
                     contentPadding = PaddingValues(top = 14.dp, bottom = 174.dp),
                     verticalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
+                    if (loading || refreshArmed) {
+                        item {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(44.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (loading) {
+                                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Lime, strokeWidth = 2.dp)
+                                } else {
+                                    Text("Atualizando...", color = Color.White.copy(alpha = .68f), fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
                     if (posts.isEmpty()) {
                         item {
                             Box(Modifier.fillMaxWidth().padding(18.dp)) {
@@ -261,7 +312,7 @@ fun CommunityScreen(
 }
 
 @Composable
-fun CommunityStoryBubble(authorName: String) {
+fun CommunityStoryBubble(authorName: String, avatarUrl: String) {
     Column(
         modifier = Modifier.width(66.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -273,11 +324,10 @@ fun CommunityStoryBubble(authorName: String) {
                 .background(Lime),
             contentAlignment = Alignment.Center
         ) {
-            Image(
-                painter = painterResource(R.drawable.profile),
+            ProfileAvatar(
+                avatarUrl = avatarUrl,
                 contentDescription = "Story de $authorName",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.size(50.dp).clip(CircleShape)
+                modifier = Modifier.size(50.dp)
             )
         }
         Text(
@@ -309,11 +359,10 @@ fun CommunityPostCard(
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Image(
-                    painter = painterResource(R.drawable.profile),
+                ProfileAvatar(
+                    avatarUrl = post.authorAvatarUrl,
                     contentDescription = "Foto de ${post.authorName}",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(38.dp).clip(CircleShape)
+                    modifier = Modifier.size(38.dp)
                 )
                 Column(Modifier.padding(start = 10.dp).weight(1f)) {
                     Text(post.authorName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -392,7 +441,10 @@ fun CommunityPostAttachments(post: CommunityPost) {
             if (isGalleryMediaUri(it)) {
                 GalleryImage(
                     uri = it,
-                    modifier = Modifier.fillMaxWidth().height(210.dp).clip(RoundedCornerShape(14.dp))
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 180.dp, max = 420.dp)
+                        .clip(RoundedCornerShape(14.dp))
                 )
             } else {
                 CommunityAttachmentRow(Icons.Outlined.Image, it)
@@ -467,6 +519,66 @@ fun CommunityPostDetailScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = PurpleBackground)
             )
+        },
+        bottomBar = {
+            Surface(color = PurpleBackground, shadowElevation = 12.dp) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .imePadding()
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (replyingTo != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Respondendo $replyAuthor", color = Lime, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { replyingTo = null }) { Text("Cancelar", color = Color.White) }
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextField(
+                            value = commentText,
+                            onValueChange = { commentText = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(52.dp)
+                                .focusRequester(commentFocusRequester),
+                            placeholder = { Text(if (replyingTo == null) "Adicionar comentario" else "Responder comentario") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(50),
+                            colors = TextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedContainerColor = PurpleSurface,
+                                unfocusedContainerColor = PurpleSurface,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                cursorColor = Lime
+                            )
+                        )
+                        Button(
+                            onClick = {
+                                val target = replyingTo
+                                if (target == null) {
+                                    onComment(commentText.trim())
+                                } else {
+                                    onReply(target, commentText.trim())
+                                }
+                                commentText = ""
+                                replyingTo = null
+                            },
+                            enabled = commentText.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                            shape = RoundedCornerShape(50),
+                            contentPadding = PaddingValues(horizontal = 14.dp),
+                            modifier = Modifier.height(52.dp)
+                        ) {
+                            Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = "Enviar", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+            }
         }
     ) { padding ->
         LazyColumn(
@@ -477,11 +589,10 @@ fun CommunityPostDetailScreen(
             item {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Image(
-                            painter = painterResource(R.drawable.profile),
+                        ProfileAvatar(
+                            avatarUrl = post.authorAvatarUrl,
                             contentDescription = "Foto de ${post.authorName}",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(44.dp).clip(CircleShape)
+                            modifier = Modifier.size(44.dp)
                         )
                         Column(Modifier.padding(start = 12.dp).weight(1f)) {
                             Text(post.authorName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -511,52 +622,6 @@ fun CommunityPostDetailScreen(
                             commentFocusRequester.requestFocus()
                         }
                         CommunityActionButton(Icons.Outlined.Share, post.shares.toString(), Color.White, onShare)
-                    }
-                }
-                HorizontalDivider(color = NavigationPurple, thickness = 0.8.dp)
-            }
-            item {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (replyingTo != null) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Respondendo $replyAuthor", color = Lime, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            TextButton(onClick = { replyingTo = null }) { Text("Cancelar", color = Color.White) }
-                        }
-                    }
-                    TextField(
-                        value = commentText,
-                        onValueChange = { commentText = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(commentFocusRequester),
-                        label = { Text(if (replyingTo == null) "Adicionar comentario" else "Responder comentario") },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = TextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedContainerColor = PurpleSurface,
-                            unfocusedContainerColor = PurpleSurface,
-                            focusedIndicatorColor = Lime,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            cursorColor = Lime
-                        )
-                    )
-                    Button(
-                        onClick = {
-                            val target = replyingTo
-                            if (target == null) {
-                                onComment(commentText.trim())
-                            } else {
-                                onReply(target, commentText.trim())
-                            }
-                            commentText = ""
-                            replyingTo = null
-                        },
-                        enabled = commentText.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(if (replyingTo == null) "Comentar" else "Responder", fontWeight = FontWeight.Bold)
                     }
                 }
                 HorizontalDivider(color = NavigationPurple, thickness = 0.8.dp)
@@ -605,11 +670,10 @@ fun CommunityCommentRow(
             .padding(start = (16 + depth * 28).dp, end = 16.dp, top = 10.dp, bottom = 4.dp)
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(
-                painter = painterResource(R.drawable.profile),
+            ProfileAvatar(
+                avatarUrl = comment.authorAvatarUrl,
                 contentDescription = "Foto de ${comment.authorName}",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.size(34.dp).clip(CircleShape)
+                modifier = Modifier.size(34.dp)
             )
             Box(Modifier.width(1.dp).height(34.dp).background(NavigationPurple))
         }

@@ -63,6 +63,7 @@ import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DirectionsRun
 import androidx.compose.material.icons.outlined.Edit
@@ -147,6 +148,7 @@ import com.example.myapplication.data.Announcement
 import com.example.myapplication.data.CommunityPost
 import com.example.myapplication.data.CommunityPostType
 import com.example.myapplication.data.Student
+import com.example.myapplication.data.TrainingNowUser
 import com.example.myapplication.data.Workout
 import com.example.myapplication.data.Event
 import com.example.myapplication.ui.AgeGoUiState
@@ -159,6 +161,7 @@ import com.example.myapplication.ui.theme.PurpleBackground
 import com.example.myapplication.ui.theme.PurpleDeep
 import com.example.myapplication.ui.theme.PurpleSurface
 import androidx.compose.ui.text.style.TextAlign
+import coil.compose.AsyncImage
 import kotlin.math.roundToInt
 
 
@@ -186,11 +189,12 @@ fun HomeScreenV2(state: AgeGoUiState, navigate: (String) -> Unit) {
             Box(
                 modifier = Modifier.padding(start = 16.dp)
             ) {
-                Image(
-                    painter = painterResource(R.drawable.profile),
+                ProfileAvatar(
+                    avatarUrl = state.authSession?.avatarUrl.orEmpty(),
                     contentDescription = "Perfil",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(42.dp).clip(CircleShape)
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clickable { navigate("settings") }
                 )
             }
             Spacer(Modifier.height(34.dp))
@@ -219,7 +223,7 @@ fun HomeScreenV2(state: AgeGoUiState, navigate: (String) -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
-            color = PurpleSurface,
+            color = if (selectedDay != null) PurpleDeep else PurpleSurface,
             shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
         ) {
             LazyColumn(
@@ -227,45 +231,67 @@ fun HomeScreenV2(state: AgeGoUiState, navigate: (String) -> Unit) {
                 contentPadding = PaddingValues(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
-                item {
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(18.dp)
-                    ) {
-                        ShortcutCircleSvg("Alunos", R.drawable.ic_option_alunos) { navigate("students") }
-                        ShortcutCircleSvg("Rotinas", R.drawable.ic_option_modalidades) { navigate("modalities") }
-                        ShortcutCircleSvg("Treinos", R.drawable.ic_option_treinos) { navigate("workouts") }
-                        ShortcutCircleSvg("Grupos", R.drawable.ic_option_grupos) { navigate("groups") }
-                    }
-                }
                 if (selectedDay != null) {
                     item {
-                        Text(
-                            "Eventos do dia - ${days.first { it.key == selectedDay }.label}",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    "Eventos do dia",
+                                    color = Color.White,
+                                    fontSize = 20.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    days.first { it.key == selectedDay }.label,
+                                    color = Lime,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                            IconButton(onClick = { selectedDay = null }) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Fechar eventos", tint = Color.White)
+                            }
+                        }
                     }
                     if (selectedEvents.isEmpty()) {
                         item {
                             Surface(color = PurpleBackground, shape = RoundedCornerShape(18.dp)) {
-                                Text("Nenhum evento programado para este dia.", Modifier.fillMaxWidth().padding(16.dp))
+                                Text(
+                                    "Nenhum evento programado para este dia.",
+                                    Modifier.fillMaxWidth().padding(16.dp),
+                                    color = Color.White.copy(alpha = .72f)
+                                )
                             }
                         }
                     } else {
-                        items(selectedEvents) { EventCard(it) }
+                        items(selectedEvents) { EventCard(it, containerColor = PurpleBackground) }
                     }
-                }
-                item {
-                    Text("Monitoramento", fontSize = 18.sp, fontWeight = FontWeight.Normal)
-                }
-                item {
-                    Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
-                        Text(
-                            "Nenhum atalho definido ainda.",
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                } else {
+                    item {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(18.dp)
+                        ) {
+                            ShortcutCircleSvg("Alunos", R.drawable.ic_option_alunos) { navigate("students") }
+                            ShortcutCircleSvg("Rotinas", R.drawable.ic_option_modalidades) { navigate("modalities") }
+                            ShortcutCircleSvg("Treinos", R.drawable.ic_option_treinos) { navigate("workouts") }
+                            ShortcutCircleSvg("Grupos", R.drawable.ic_option_grupos) { navigate("groups") }
+                        }
+                    }
+                    item {
+                        Text("Monitoramento", fontSize = 18.sp, fontWeight = FontWeight.Normal)
+                    }
+                    item {
+                        Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
+                            Text(
+                                "Nenhum atalho definido ainda.",
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
                 if (state.isLoading) item { LoadingBox() }
@@ -466,7 +492,10 @@ fun ShortcutCircleSvg(
 }
 
 @Composable
-fun TrainingNowBar() {
+fun TrainingNowBar(users: List<TrainingNowUser>) {
+    if (users.isEmpty()) return
+    val visibleUsers = users.take(3)
+    val remaining = (users.size - visibleUsers.size).coerceAtLeast(0)
     Surface(
         modifier = Modifier.fillMaxWidth().padding(start = 6.dp , end = 6.dp),
         color = PurpleBackground,
@@ -482,7 +511,6 @@ fun TrainingNowBar() {
             Text("Treinando agora", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = Color.White)
             Spacer(Modifier.width(12.dp))
 
-            // Pill com avatares lado a lado
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
@@ -490,22 +518,24 @@ fun TrainingNowBar() {
                     .padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TrainingAvatar()
-                Spacer(Modifier.width(2.dp))
-                TrainingAvatar()
+                visibleUsers.forEachIndexed { index, user ->
+                    if (index > 0) Spacer(Modifier.width(2.dp))
+                    TrainingAvatar(user)
+                }
             }
 
             Spacer(Modifier.width(6.dp))
 
-// Badge "+99" separado
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(Lime)
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("+99", color = PurpleDeep, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            if (remaining > 0) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(Lime)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("+$remaining", color = PurpleDeep, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
             }
 
             Spacer(Modifier.weight(1f))
@@ -515,15 +545,35 @@ fun TrainingNowBar() {
 }
 
 @Composable
-fun TrainingAvatar() {
-    Image(
-        painter = painterResource(R.drawable.profile),
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = Modifier
-            .size(28.dp)
-            .clip(CircleShape)
+fun TrainingAvatar(user: TrainingNowUser) {
+    ProfileAvatar(
+        avatarUrl = user.avatarUrl,
+        contentDescription = "Foto de ${user.name}",
+        modifier = Modifier.size(28.dp)
     )
+}
+
+@Composable
+fun ProfileAvatar(
+    avatarUrl: String,
+    contentDescription: String?,
+    modifier: Modifier = Modifier
+) {
+    if (avatarUrl.isNotBlank()) {
+        AsyncImage(
+            model = avatarUrl,
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = modifier.clip(CircleShape)
+        )
+    } else {
+        Image(
+            painter = painterResource(R.drawable.profile),
+            contentDescription = contentDescription,
+            contentScale = ContentScale.Crop,
+            modifier = modifier.clip(CircleShape)
+        )
+    }
 }
 
 @Composable
@@ -660,21 +710,21 @@ fun PillBottomBar(
 }
 
 @Composable
-fun EventCard(event: Event) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = PurpleSurface)) {
+fun EventCard(event: Event, containerColor: Color = PurpleSurface) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = containerColor)) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(48.dp).clip(CircleShape).background(PurpleDeep), contentAlignment = Alignment.Center) {
                 Icon(Icons.Outlined.DirectionsRun, null, tint = Lime)
             }
             Column(Modifier.padding(start = 12.dp).weight(1f)) {
-                Text(event.name, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(event.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
                     listOfNotNull(eventTime(event.eventDate), event.location).joinToString(" · "),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = Color.White.copy(alpha = .64f),
                     fontSize = 13.sp
                 )
             }
-            Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(18.dp))
+            Icon(Icons.AutoMirrored.Outlined.ArrowForward, null, Modifier.size(18.dp), tint = Color.White.copy(alpha = .72f))
         }
     }
 }

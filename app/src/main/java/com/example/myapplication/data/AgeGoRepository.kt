@@ -1,21 +1,43 @@
 package com.example.myapplication.data
 
 import android.content.ContentResolver
+import android.content.Context
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
+import android.content.pm.PackageManager
 import android.util.Base64
 import android.util.Log
 import com.example.myapplication.BuildConfig
+import com.example.myapplication.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 
 interface AgeGoRepository {
+    suspend fun restoreSession(): AuthSession?
+    suspend fun clearSession()
+    suspend fun startLogin(identifier: String): VerificationResult
+    suspend fun verifyLogin(identifier: String, token: String): AuthSession
+    suspend fun registerInstructor(name: String, email: String, phone: String): VerificationResult
+    suspend fun verifyInstructor(contentResolver: ContentResolver, email: String, token: String, displayName: String, photoUri: Uri?): AuthSession
+    suspend fun startStudentFirstAccess(phone: String): VerificationResult
+    suspend fun completeStudentFirstAccess(contentResolver: ContentResolver, phone: String, email: String, nickname: String, photoUri: Uri?, token: String): AuthSession
+    suspend fun saveProfile(contentResolver: ContentResolver, name: String, photoUri: Uri?): AuthSession
+    suspend fun loadSettings(): InstructorSettings
+    suspend fun saveSettings(settings: InstructorSettings): InstructorSettings
     suspend fun loadDashboard(): DashboardData
+    suspend fun sendPresence()
     suspend fun saveStudent(student: Student): Student
     suspend fun deleteStudent(studentId: String)
     suspend fun saveWorkout(workout: Workout): Workout
@@ -32,7 +54,93 @@ interface AgeGoRepository {
     suspend fun toggleCommunityCommentLike(commentId: String)
     suspend fun shareCommunityPost(postId: String)
     suspend fun uploadMedia(contentResolver: ContentResolver, uri: Uri): String
+    suspend fun saveWorkoutSession(session: WorkoutSessionPayload)
 }
+
+@Serializable
+data class AuthSession(
+    val accessToken: String = "",
+    val refreshToken: String = "",
+    val id: String = "",
+    val role: String = "",
+    val name: String = "",
+    val email: String = "",
+    val phone: String = "",
+    val avatarUrl: String = "",
+    val needsProfile: Boolean = false
+)
+
+@Serializable
+data class VerificationResult(
+    val ok: Boolean = false,
+    val message: String = "",
+    val verificationToken: String = "",
+    val nextStep: String = ""
+)
+
+class AuthRequiredException(message: String) : IllegalStateException(message)
+
+@Serializable
+private data class ApiErrorResponse(
+    val error: String = "",
+    val message: String = "",
+    val details: String = "",
+    val requestId: String = ""
+)
+
+@Serializable
+data class InstructorSettings(
+    val pixKey: String = "",
+    val notificationEmail: Boolean = true,
+    val notificationPush: Boolean = true
+)
+
+@Serializable
+private data class SettingsResponse(val settings: InstructorSettings = InstructorSettings())
+
+@Serializable
+private data class LoginPayload(val identifier: String)
+
+@Serializable
+private data class LoginVerifyPayload(val identifier: String, val token: String)
+
+@Serializable
+private data class RefreshPayload(val refreshToken: String)
+
+@Serializable
+private data class InstructorRegisterPayload(val name: String, val email: String, val phone: String)
+
+@Serializable
+private data class VerifyInstructorPayload(
+    val email: String,
+    val token: String,
+    val displayName: String,
+    val photoBase64: String = "",
+    val photoMimeType: String = ""
+)
+
+@Serializable
+private data class StudentStartPayload(val phone: String)
+
+@Serializable
+private data class StudentCompletePayload(
+    val phone: String,
+    val email: String,
+    val nickname: String,
+    val photoBase64: String = "",
+    val photoMimeType: String = "",
+    val token: String
+)
+
+@Serializable
+private data class ProfilePayload(
+    val name: String,
+    val photoBase64: String = "",
+    val photoMimeType: String = ""
+)
+
+@Serializable
+private data class ProfileResponse(val user: AuthSession = AuthSession())
 
 @Serializable
 private data class UploadMediaPayload(val base64: String, val mimeType: String)
@@ -40,16 +148,179 @@ private data class UploadMediaPayload(val base64: String, val mimeType: String)
 @Serializable
 private data class UploadMediaResponse(val url: String)
 
+@Serializable
+data class WorkoutSessionPayload(
+    val routineId: String = "",
+    val routineName: String = "",
+    val dayNumber: Int = 1,
+    val cycleStep: Int = 1,
+    val elapsedMs: Long = 0,
+    val distanceMeters: Double = 0.0,
+    val paceSecondsPerKm: Double = 0.0,
+    val status: String = "completed",
+    val plannedSteps: List<WorkoutSessionStep> = emptyList(),
+    val routePoints: List<WorkoutRoutePoint> = emptyList(),
+    val splits: List<WorkoutSplit> = emptyList()
+)
+
+@Serializable
+data class WorkoutSessionStep(
+    val name: String = "",
+    val targetType: String = "open",
+    val targetValue: Double = 0.0,
+    val unit: String = ""
+)
+
+@Serializable
+data class WorkoutRoutePoint(
+    val lat: Double,
+    val lon: Double,
+    val timestamp: Long
+)
+
+@Serializable
+data class WorkoutSplit(
+    val km: Int,
+    val elapsedMs: Long,
+    val paceSeconds: Double
+)
+
 class ApiAgeGoRepository(
-    private val baseUrl: String
+    private val baseUrl: String,
+    context: Context? = null
 ) : AgeGoRepository {
+    private val appContext = context?.applicationContext
+    private val prefs = context?.getSharedPreferences("agego_auth", Context.MODE_PRIVATE)
+    private var accessToken: String = ""
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
 
+    override suspend fun restoreSession(): AuthSession? =
+        prefs?.getString("session", null)?.let { runCatching { json.decodeFromString<AuthSession>(it) }.getOrNull() }?.also {
+            accessToken = it.accessToken
+        }
+
+    override suspend fun clearSession() {
+        accessToken = ""
+        prefs?.edit()?.remove("session")?.apply()
+    }
+
+    override suspend fun startLogin(identifier: String): VerificationResult =
+        request<VerificationResult, LoginPayload>("POST", "/auth/login/start", LoginPayload(identifier)).also {
+            showAuthTokenNotification(it.verificationToken)
+        }
+
+    override suspend fun verifyLogin(identifier: String, token: String): AuthSession {
+        val session: AuthSession = request("POST", "/auth/login/verify", LoginVerifyPayload(identifier, token))
+        saveSession(session)
+        return session
+    }
+
+    override suspend fun registerInstructor(name: String, email: String, phone: String): VerificationResult =
+        request<VerificationResult, InstructorRegisterPayload>("POST", "/auth/instructor/register", InstructorRegisterPayload(name, email, phone)).also {
+            showAuthTokenNotification(it.verificationToken)
+        }
+
+    override suspend fun verifyInstructor(contentResolver: ContentResolver, email: String, token: String, displayName: String, photoUri: Uri?): AuthSession {
+        val photo = photoUri?.let { preparePhotoPayload(contentResolver, it) }
+        val session: AuthSession = request(
+            "POST",
+            "/auth/instructor/verify",
+            VerifyInstructorPayload(email, token, displayName, photo?.base64.orEmpty(), photo?.mimeType.orEmpty())
+        )
+        saveSession(session)
+        return session
+    }
+
+    override suspend fun startStudentFirstAccess(phone: String): VerificationResult =
+        request<VerificationResult, StudentStartPayload>("POST", "/auth/student/start", StudentStartPayload(phone)).also {
+            showAuthTokenNotification(it.verificationToken)
+        }
+
+    override suspend fun completeStudentFirstAccess(
+        contentResolver: ContentResolver,
+        phone: String,
+        email: String,
+        nickname: String,
+        photoUri: Uri?,
+        token: String
+    ): AuthSession {
+        val photo = photoUri?.let { preparePhotoPayload(contentResolver, it) }
+        val session: AuthSession = request(
+            "POST",
+            "/auth/student/complete",
+            StudentCompletePayload(phone, email, nickname, photo?.base64.orEmpty(), photo?.mimeType.orEmpty(), token)
+        )
+        saveSession(session)
+        return session
+    }
+
+    override suspend fun saveProfile(contentResolver: ContentResolver, name: String, photoUri: Uri?): AuthSession {
+        val photo = photoUri?.let { preparePhotoPayload(contentResolver, it) }
+        val response: ProfileResponse = request(
+            "PUT",
+            "/me",
+            ProfilePayload(name = name, photoBase64 = photo?.base64.orEmpty(), photoMimeType = photo?.mimeType.orEmpty())
+        )
+        val current = restoreSession()
+        val updated = response.user.copy(
+            accessToken = current?.accessToken.orEmpty(),
+            refreshToken = current?.refreshToken.orEmpty()
+        )
+        saveSession(updated)
+        return updated
+    }
+
+    override suspend fun loadSettings(): InstructorSettings {
+        val response: SettingsResponse = request("GET", "/settings")
+        return response.settings
+    }
+
+    override suspend fun saveSettings(settings: InstructorSettings): InstructorSettings {
+        val response: SettingsResponse = request("PUT", "/settings", settings)
+        return response.settings
+    }
+
+    private fun saveSession(session: AuthSession) {
+        accessToken = session.accessToken
+        prefs?.edit()?.putString("session", json.encodeToString(session))?.apply()
+    }
+
+    private fun showAuthTokenNotification(token: String) {
+        val context = appContext ?: return
+        if (token.length != 6) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
+        val channelId = "agego_auth_tokens"
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(channelId, "Tokens de acesso", NotificationManager.IMPORTANCE_HIGH)
+            )
+        }
+        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            android.app.Notification.Builder(context, channelId)
+        } else {
+            android.app.Notification.Builder(context)
+        }
+            .setSmallIcon(R.drawable.ic_nav_hub_fit)
+            .setContentTitle("Token AgeGo")
+            .setContentText("Seu codigo de acesso: $token")
+            .setStyle(android.app.Notification.BigTextStyle().bigText("Seu codigo de acesso AgeGo e $token. Ele expira em alguns minutos."))
+            .setAutoCancel(true)
+            .build()
+        manager.notify(6100 + (token.takeLast(2).toIntOrNull() ?: 0), notification)
+    }
+
     override suspend fun loadDashboard(): DashboardData =
         request("GET", "/dashboard")
+
+    override suspend fun sendPresence() {
+        requestUnit("POST", "/presence/training-now")
+    }
 
     override suspend fun saveStudent(student: Student): Student {
         val response: StudentResponse = if (student.id.isBlank()) {
@@ -58,7 +329,13 @@ class ApiAgeGoRepository(
             request("PUT", "/students/${student.id}", student.toPayload())
         }
         return response.student?.let {
-            student.copy(id = it.id.ifBlank { student.id })
+            it.copy(
+                id = it.id.ifBlank { student.id },
+                billingDay = student.billingDay,
+                monthlyFee = student.monthlyFee,
+                accessCode = response.accessCode,
+                accessCodeExpiresAt = response.accessCodeExpiresAt
+            )
         } ?: student
     }
 
@@ -141,13 +418,30 @@ class ApiAgeGoRepository(
 
     override suspend fun uploadMedia(contentResolver: ContentResolver, uri: Uri): String =
         withContext(Dispatchers.IO) {
-            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            val originalBytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: throw IllegalStateException("Não foi possível ler a imagem")
-            val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
+            val originalMimeType = contentResolver.getType(uri) ?: "image/jpeg"
+            val (bytes, mimeType) = prepareImageUpload(originalBytes, originalMimeType)
             val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
             val body = json.encodeToString(UploadMediaPayload(base64 = base64, mimeType = mimeType))
             val responseText = execute("POST", "/upload-media", body, readTimeoutMs = 60_000)
             json.decodeFromString<UploadMediaResponse>(responseText).url
+        }
+
+    override suspend fun saveWorkoutSession(session: WorkoutSessionPayload) {
+        requestUnit("POST", "/workout-sessions", session)
+    }
+
+    private suspend fun preparePhotoPayload(contentResolver: ContentResolver, uri: Uri): UploadMediaPayload =
+        withContext(Dispatchers.IO) {
+            val originalBytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: throw IllegalStateException("Nao foi possivel ler a imagem")
+            val originalMimeType = contentResolver.getType(uri) ?: "image/jpeg"
+            val (bytes, mimeType) = prepareImageUpload(originalBytes, originalMimeType)
+            UploadMediaPayload(
+                base64 = Base64.encodeToString(bytes, Base64.NO_WRAP),
+                mimeType = mimeType
+            )
         }
 
     private suspend inline fun <reified T> request(method: String, path: String): T =
@@ -166,11 +460,18 @@ class ApiAgeGoRepository(
 
     private suspend fun execute(method: String, path: String, body: String?, readTimeoutMs: Int = 20_000): String =
         withContext(Dispatchers.IO) {
+            fun performRequest(includeAuth: Boolean = true): Pair<Int, String> {
             val connection = (URL("${baseUrl.trimEnd('/')}$path").openConnection() as HttpURLConnection).apply {
                 requestMethod = method
                 connectTimeout = 12_000
                 readTimeout = readTimeoutMs
                 setRequestProperty("Accept", "application/json")
+                if (BuildConfig.APP_GATE_KEY.isNotBlank()) {
+                    setRequestProperty("X-AgeGo-App-Key", BuildConfig.APP_GATE_KEY)
+                }
+                if (includeAuth && accessToken.isNotBlank()) {
+                    setRequestProperty("Authorization", "Bearer $accessToken")
+                }
                 if (body != null) {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
@@ -185,127 +486,80 @@ class ApiAgeGoRepository(
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             connection.disconnect()
+                return code to text
+            }
 
-        if (code !in 200..299) {
+            var (code, text) = performRequest()
+            if (code == HttpURLConnection.HTTP_UNAUTHORIZED && path != "/auth/refresh" && refreshSession()) {
+                val retry = performRequest()
+                code = retry.first
+                text = retry.second
+            }
+
+            if (code !in 200..299) {
+                val apiMessage = parseApiError(text).ifBlank { "HTTP $code" }
                 Log.e("AgeGoApi", "$method $path failed HTTP $code: $text")
-                throw IllegalStateException(text.ifBlank { "HTTP $code" })
+                if (code == HttpURLConnection.HTTP_UNAUTHORIZED) {
+                    accessToken = ""
+                    prefs?.edit()?.remove("session")?.apply()
+                    throw AuthRequiredException(apiMessage.ifBlank { "Sessao expirada. Entre novamente." })
+                }
+                throw IllegalStateException(apiMessage)
             }
             text.ifBlank { "{}" }
         }
-}
 
-class DemoAgeGoRepository(
-    private val reason: String? = null
-) : AgeGoRepository {
-    override suspend fun loadDashboard() = DashboardData(
-        students = listOf(
-            Student("1", "Marina Alves", "marina@agego.com", "+55 11 90000-0101", "Performance", "Performance", "active"),
-            Student("2", "Rafael Souza", "rafael@agego.com", "+55 11 90000-0102", "Essencial", "Essencial", "pending_payment"),
-            Student("3", "Camila Lima", "camila@agego.com", "+55 11 90000-0103", "Performance", "Performance", "active"),
-            Student("4", "Bruno Martins", "bruno@agego.com", "+55 11 90000-0104", "Base", "Base", "inactive")
-        ),
-        workouts = listOf(
-            Workout("1", "Intervalado 5 km", "Series de velocidade e recuperacao", "directions_run", "active"),
-            Workout("2", "Longao progressivo", "Aumento gradual de ritmo", "route", "active"),
-            Workout("3", "Forca para corrida", "Mobilidade e estabilidade", "fitness_center", "draft")
-        ),
-        announcements = listOf(
-            Announcement("1", "Treino de sabado confirmado as 6h30 no parque.", "Hoje, 09:10"),
-            Announcement("2", "Lembrem de atualizar o resultado do treino semanal.", "Ontem, 18:40", "group")
-        ),
-        events = listOf(
-            Event("1", "Treino coletivo", "Rodagem leve em grupo", demoDate(0, 6, 30), "Parque Central"),
-            Event("2", "Avaliacao de pace", "Teste de 5 km", demoDate(0, 18, 0), "Pista Municipal")
-        ),
-        groups = listOf(
-            DirectoryItem("iniciante", "Iniciantes", "active", "Grupo para alunos em fase inicial."),
-            DirectoryItem("performance", "Performance", "active", "Treinos focados em evolucao de pace.")
-        ),
-        routines = listOf(
-            DirectoryItem("corrida", "Corrida", "active", "Treinos de rua, pista e provas."),
-            DirectoryItem("fortalecimento", "Fortalecimento", "active", "Base de forca, mobilidade e estabilidade.")
-        ),
-        communityPosts = demoCommunityPosts(emptyList()),
-        isDemo = true,
-        message = reason ?: "Modo demonstracao. Inicie a API local para carregar dados reais."
-    )
+    private fun refreshSession(): Boolean {
+        val current = prefs?.getString("session", null)
+            ?.let { runCatching { json.decodeFromString<AuthSession>(it) }.getOrNull() }
+            ?: return false
+        if (current.refreshToken.isBlank()) return false
 
-    override suspend fun saveStudent(student: Student) = student.withId()
-    override suspend fun deleteStudent(studentId: String) = Unit
-    override suspend fun saveWorkout(workout: Workout) = workout.copy(id = workout.id.ifBlank { java.util.UUID.randomUUID().toString() })
-    override suspend fun deleteWorkout(workoutId: String) = Unit
-    override suspend fun saveGroup(group: DirectoryItem) = group.withId()
-    override suspend fun deleteGroup(groupId: String) = Unit
-    override suspend fun saveRoutine(routine: DirectoryItem) = routine.withId()
-    override suspend fun deleteRoutine(routineId: String) = Unit
-    override suspend fun saveEvent(event: Event) = event.copy(id = event.id.ifBlank { java.util.UUID.randomUUID().toString() })
-    override suspend fun deleteEvent(eventId: String) = Unit
-    override suspend fun saveCommunityPost(post: CommunityPost) = post.copy(id = post.id.ifBlank { java.util.UUID.randomUUID().toString() })
-    override suspend fun toggleCommunityLike(postId: String) = Unit
-    override suspend fun addCommunityComment(postId: String, content: String, parentCommentId: String?) = Unit
-    override suspend fun toggleCommunityCommentLike(commentId: String) = Unit
-    override suspend fun shareCommunityPost(postId: String) = Unit
-    override suspend fun uploadMedia(contentResolver: ContentResolver, uri: Uri): String = uri.toString()
-}
-
-private fun Student.withId() = copy(id = id.ifBlank { java.util.UUID.randomUUID().toString() })
-private fun DirectoryItem.withId() = copy(id = id.ifBlank { java.util.UUID.randomUUID().toString() })
-
-private fun demoDate(daysFromToday: Int, hour: Int, minute: Int): String {
-    val calendar = java.util.Calendar.getInstance().apply {
-        add(java.util.Calendar.DAY_OF_YEAR, daysFromToday)
-        set(java.util.Calendar.HOUR_OF_DAY, hour)
-        set(java.util.Calendar.MINUTE, minute)
+        return runCatching {
+            val body = json.encodeToString(RefreshPayload(current.refreshToken))
+            val connection = (URL("${baseUrl.trimEnd('/')}/auth/refresh").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 12_000
+                readTimeout = 20_000
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("Content-Type", "application/json")
+                if (BuildConfig.APP_GATE_KEY.isNotBlank()) {
+                    setRequestProperty("X-AgeGo-App-Key", BuildConfig.APP_GATE_KEY)
+                }
+                doOutput = true
+            }
+            OutputStreamWriter(connection.outputStream).use { it.write(body) }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            connection.disconnect()
+            if (code !in 200..299) return false
+            val refreshed = json.decodeFromString<AuthSession>(text)
+            saveSession(refreshed)
+            true
+        }.getOrDefault(false)
     }
-    return java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.US).format(calendar.time)
+
+    private fun parseApiError(text: String): String {
+        if (text.isBlank()) return ""
+        return runCatching {
+            val error = json.decodeFromString<ApiErrorResponse>(text)
+            listOf(error.error, error.message, error.details, error.requestId.takeIf { it.isNotBlank() }?.let { "ID $it" }.orEmpty())
+                .filter { it.isNotBlank() }
+                .joinToString(" - ")
+        }.getOrElse { text }
+    }
 }
 
 object RepositoryProvider {
+    private var appContext: Context? = null
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
+
     fun create(): AgeGoRepository =
-        FallbackRepository(ApiAgeGoRepository(BuildConfig.AGEGO_API_URL))
-}
-
-private class FallbackRepository(
-    private val remote: AgeGoRepository
-) : AgeGoRepository {
-    private var demo: DemoAgeGoRepository? = null
-
-    override suspend fun loadDashboard(): DashboardData = runCatching {
-        remote.loadDashboard()
-    }.getOrElse { error ->
-        Log.e("AgeGoApi", "dashboard fallback: ${error.message}", error)
-        DemoAgeGoRepository(error.message).also { demo = it }.loadDashboard()
-    }
-
-    override suspend fun saveStudent(student: Student) = runRemoteOrDemo { saveStudent(student) }
-    override suspend fun deleteStudent(studentId: String) = runRemoteOrDemoUnit { deleteStudent(studentId) }
-    override suspend fun saveWorkout(workout: Workout) = runRemoteOrDemo { saveWorkout(workout) }
-    override suspend fun deleteWorkout(workoutId: String) = runRemoteOrDemoUnit { deleteWorkout(workoutId) }
-    override suspend fun saveGroup(group: DirectoryItem) = runRemoteOrDemo { saveGroup(group) }
-    override suspend fun deleteGroup(groupId: String) = runRemoteOrDemoUnit { deleteGroup(groupId) }
-    override suspend fun saveRoutine(routine: DirectoryItem) = runRemoteOrDemo { saveRoutine(routine) }
-    override suspend fun deleteRoutine(routineId: String) = runRemoteOrDemoUnit { deleteRoutine(routineId) }
-    override suspend fun saveEvent(event: Event) = runRemoteOrDemo { saveEvent(event) }
-    override suspend fun deleteEvent(eventId: String) = runRemoteOrDemoUnit { deleteEvent(eventId) }
-    override suspend fun saveCommunityPost(post: CommunityPost) = runRemoteOrDemo { saveCommunityPost(post) }
-    override suspend fun toggleCommunityLike(postId: String) = runRemoteOrDemoUnit { toggleCommunityLike(postId) }
-    override suspend fun addCommunityComment(postId: String, content: String, parentCommentId: String?) =
-        runRemoteOrDemoUnit { addCommunityComment(postId, content, parentCommentId) }
-    override suspend fun toggleCommunityCommentLike(commentId: String) = runRemoteOrDemoUnit { toggleCommunityCommentLike(commentId) }
-    override suspend fun shareCommunityPost(postId: String) = runRemoteOrDemoUnit { shareCommunityPost(postId) }
-    override suspend fun uploadMedia(contentResolver: ContentResolver, uri: Uri): String =
-        remote.uploadMedia(contentResolver, uri)
-
-    private suspend fun <T> runRemoteOrDemo(block: suspend AgeGoRepository.() -> T): T =
-        runCatching { remote.block() }.getOrElse {
-            (demo ?: DemoAgeGoRepository(it.message).also { repo -> demo = repo }).block()
-        }
-
-    private suspend fun runRemoteOrDemoUnit(block: suspend AgeGoRepository.() -> Unit) {
-        runCatching { remote.block() }.getOrElse {
-            (demo ?: DemoAgeGoRepository(it.message).also { repo -> demo = repo }).block()
-        }
-    }
+        ApiAgeGoRepository(BuildConfig.AGEGO_API_URL, appContext)
 }
 
 @Serializable
@@ -314,7 +568,9 @@ private data class StudentPayload(
     val email: String,
     val phone: String,
     val routine: String,
-    val status: String
+    val status: String,
+    val billingDay: Int,
+    val monthlyFee: String
 )
 
 @Serializable
@@ -363,13 +619,18 @@ private data class CommentPayload(
     val parentCommentId: String? = null
 )
 
-@Serializable private data class StudentResponse(val student: Student? = null)
+@Serializable
+private data class StudentResponse(
+    val student: Student? = null,
+    val accessCode: String = "",
+    val accessCodeExpiresAt: String = ""
+)
 @Serializable private data class WorkoutResponse(val workout: Workout? = null)
 @Serializable private data class DirectoryResponse(val group: DirectoryItem? = null, val routine: DirectoryItem? = null)
 @Serializable private data class EventResponse(val event: Event? = null)
 @Serializable private data class PostResponse(val post: CommunityPost? = null)
 
-private fun Student.toPayload() = StudentPayload(name, email, phone, routine, status)
+private fun Student.toPayload() = StudentPayload(name, email, phone, routine, status, billingDay, monthlyFee)
 private fun Workout.toPayload() = WorkoutPayload(name, description.orEmpty(), iconName ?: "directions_run", status)
 private fun DirectoryItem.toPayload() = DirectoryPayload(name, description, status, studentIds)
 private fun Event.toPayload() = EventPayload(name, description.orEmpty(), eventDate, location.orEmpty())
@@ -388,20 +649,27 @@ private fun CommunityPost.toPayload() = PostPayload(
     contentWarning = contentWarning
 )
 
-private fun demoCommunityPosts(workouts: List<Workout>): List<CommunityPost> = listOf(
-    CommunityPost(
-        id = "post-1",
-        type = CommunityPostType.POST,
-        title = "Recado do treino",
-        content = "Amanha teremos rodagem leve. Hidratem bem e cheguem 10 minutos antes.",
-        target = "groups",
-        authorName = "Marina Alves",
-        commentThreads = listOf(
-            CommunityComment("comment-1", "Rafael Souza", "Confirmado, prof!"),
-            CommunityComment("comment-2", "Camila Lima", "Vou chegar mais cedo para aquecer.")
-        ),
-        likes = 12,
-        comments = 3,
-        shares = 1
-    )
-)
+private fun prepareImageUpload(bytes: ByteArray, mimeType: String): Pair<ByteArray, String> {
+    if (!mimeType.startsWith("image/") || mimeType == "image/gif") return bytes to mimeType
+
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return bytes to mimeType
+
+    val maxSide = 1600
+    var sampleSize = 1
+    while ((bounds.outWidth / sampleSize) > maxSide || (bounds.outHeight / sampleSize) > maxSide) {
+        sampleSize *= 2
+    }
+
+    val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return bytes to mimeType
+    return try {
+        ByteArrayOutputStream().use { output ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 86, output)
+            output.toByteArray() to "image/jpeg"
+        }
+    } finally {
+        bitmap.recycle()
+    }
+}

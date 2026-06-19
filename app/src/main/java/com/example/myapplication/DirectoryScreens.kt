@@ -274,19 +274,11 @@ fun <T> DirectoryScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        filters.forEach { option ->
-                                            SlimFilterBadge(
-                                                modifier = Modifier.weight(1f),
-                                                label = option,
-                                                selected = selectedFilter == option,
-                                                onClick = { onFilterSelected(option) }
-                                            )
-                                        }
-                                    }
+                                    SegmentedFilterBar(
+                                        options = filters,
+                                        selected = selectedFilter,
+                                        onSelected = onFilterSelected
+                                    )
                                     StudentSearchButton(
                                         value = query,
                                         placeholder = searchPlaceholder,
@@ -436,19 +428,11 @@ fun StudentsScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        listOf("Todos", "Em dia", "A pagar").forEach { option ->
-                                            SlimFilterBadge(
-                                                modifier = Modifier.weight(1f),
-                                                label = option,
-                                                selected = filter == option,
-                                                onClick = { filter = option }
-                                            )
-                                        }
-                                    }
+                                    SegmentedFilterBar(
+                                        options = listOf("Todos", "Em dia", "A pagar"),
+                                        selected = filter,
+                                        onSelected = { filter = it }
+                                    )
                                     StudentSearchButton(
                                         value = query,
                                         onClick = { searchMode = true }
@@ -543,6 +527,60 @@ fun SlimFilterBadge(
     }
 }
 
+@Composable
+fun SegmentedFilterBar(
+    options: List<String>,
+    selected: String,
+    onSelected: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .border(1.dp, NavigationPurple.copy(alpha = .72f), RoundedCornerShape(14.dp)),
+        color = Color.Transparent,
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().height(40.dp)) {
+            options.forEachIndexed { index, option ->
+                val selectedOption = selected == option
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .clickable { onSelected(option) },
+                    color = if (selectedOption) Lime else Color.Transparent,
+                    shape = when (index) {
+                        0 -> RoundedCornerShape(topStart = 13.dp, bottomStart = 13.dp)
+                        options.lastIndex -> RoundedCornerShape(topEnd = 13.dp, bottomEnd = 13.dp)
+                        else -> RoundedCornerShape(0.dp)
+                    }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            option,
+                            color = if (selectedOption) PurpleBackground else Color.White.copy(alpha = .82f),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                if (index != options.lastIndex) {
+                    Box(
+                        Modifier
+                            .width(1.dp)
+                            .height(40.dp)
+                            .background(NavigationPurple.copy(alpha = .72f))
+                    )
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StudentSearchButton(value: String, onClick: () -> Unit, placeholder: String = "Pesquisar aluno") {
@@ -609,7 +647,49 @@ fun StudentSearchBar(
 
 @Composable
 fun StudentListRow(student: Student, onClick: () -> Unit) {
-    DirectoryListRow(title = student.name, onClick = onClick)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(68.dp)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            ProfileAvatar(
+                avatarUrl = student.avatarUrl,
+                contentDescription = "Foto de ${student.name}",
+                modifier = Modifier.size(42.dp)
+            )
+            Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                Text(
+                    student.name,
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    student.phone.ifBlank { "Telefone nao informado" },
+                    color = Color.White.copy(alpha = .58f),
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Outlined.ArrowForward,
+                contentDescription = "Abrir aluno",
+                modifier = Modifier.size(18.dp),
+                tint = Color.White.copy(alpha = 0.78f)
+            )
+        }
+        HorizontalDivider(color = NavigationPurple, thickness = 0.8.dp)
+    }
 }
 
 @Composable

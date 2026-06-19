@@ -2,6 +2,7 @@
 
 import android.app.DatePickerDialog
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -131,6 +132,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -226,7 +228,6 @@ fun DirectoryFormScreen(
     ) {
         item { FormTextField(name, { name = it }, nameLabel) }
         item { FormTextField(description, { description = it }, descriptionLabel) }
-        item { StatusPicker(status) { status = it } }
         if (selectableStudents.isNotEmpty()) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -265,18 +266,34 @@ fun DirectoryFormScreen(
 @Composable
 fun StudentDetailScreen(
     student: Student?,
+    routines: List<DirectoryEntry> = emptyList(),
     onBack: () -> Unit,
     onSave: (Student) -> Unit,
     onDelete: ((String) -> Unit)?
 ) {
+    val context = LocalContext.current
     var editing by remember(student?.id) { mutableStateOf(student == null) }
     var tab by remember { mutableStateOf("Dados") }
     var name by remember(student?.id) { mutableStateOf(student?.name.orEmpty()) }
     var phone by remember(student?.id) { mutableStateOf(student?.phone.orEmpty()) }
     var email by remember(student?.id) { mutableStateOf(student?.email.orEmpty()) }
     var routine by remember(student?.id) { mutableStateOf(student?.routine.orEmpty().ifBlank { student?.planName.orEmpty() }) }
+    var routineQuery by remember(student?.id) { mutableStateOf(student?.routine.orEmpty().ifBlank { student?.planName.orEmpty() }) }
+    var routinePickerOpen by remember(student?.id) { mutableStateOf(student == null) }
     var status by remember(student?.id) { mutableStateOf(student?.status ?: "active") }
+    var billingDay by remember(student?.id) { mutableStateOf((student?.billingDay ?: 5).coerceIn(1, 28).toString()) }
     val title = if (student == null) "Novo aluno" else student.name
+    val currentRoutine = routines.firstOrNull { it.name.equals(routine, ignoreCase = true) || it.name.equals(student?.planName, ignoreCase = true) }
+    val routineMonthlyFee = currentRoutine?.description?.let { extractRoutinePrice(it) }.orEmpty()
+    val filteredRoutines = routines.filter { entry ->
+        entry.name.contains(routineQuery, ignoreCase = true) ||
+            entry.description.contains(routineQuery, ignoreCase = true) ||
+            entry.status.contains(routineQuery, ignoreCase = true)
+    }
+    val billingDayInt = billingDay.toIntOrNull()?.coerceIn(1, 28) ?: 5
+    val isBillingDueToday = billingDayInt == Calendar.getInstance().get(Calendar.DAY_OF_MONTH).coerceAtMost(28)
+    val tabs = if (student == null) listOf("Dados", "Rotinas") else listOf("Dados", "Rotinas", "Faturamento")
+    val canSave = name.isNotBlank() && phone.isNotBlank() && routine.isNotBlank()
 
     EditableDetailScaffold(
         title = title.ifBlank { "Aluno" },
@@ -284,31 +301,120 @@ fun StudentDetailScreen(
         onBack = onBack,
         onEdit = { editing = true },
         onSave = {
-            onSave(Student(student?.id.orEmpty(), name.trim(), email.trim(), phone.trim(), routine.trim(), routine.trim().ifBlank { "Sem rotina" }, status))
+            onSave(
+                Student(
+                    id = student?.id.orEmpty(),
+                    name = name.trim(),
+                    email = email.trim(),
+                    phone = phone.trim(),
+                    routine = routine.trim(),
+                    planName = routine.trim().ifBlank { "Sem rotina" },
+                    status = status,
+                    billingDay = billingDayInt,
+                    monthlyFee = routineMonthlyFee
+                )
+            )
             editing = false
         },
         onDelete = if (student != null && onDelete != null) ({ onDelete(student.id) }) else null,
-        saveEnabled = name.isNotBlank()
+        saveEnabled = if (student == null) canSave else name.isNotBlank()
     ) {
-        item { DetailTabs(listOf("Dados", "Treinos", "Coletas"), tab) { tab = it } }
+        item { DetailTabs(tabs, tab) { tab = it } }
         when (tab) {
             "Dados" -> {
                 if (editing) {
                     item { FormTextField(name, { name = it }, "Nome") }
-                    item { FormTextField(email, { email = it }, "Email") }
                     item { FormTextField(phone, { phone = it }, "Telefone") }
-                    item { FormTextField(routine, { routine = it }, "Rotina") }
-                    item { StudentStatusPicker(status) { status = it } }
+                    if (student != null) {
+                        item {
+                            DetailInfoRow(
+                                "Acesso do aluno",
+                                "Email e foto sao definidos pelo aluno no primeiro acesso."
+                            )
+                        }
+                    } else {
+                        item {
+                            DetailInfoRow(
+                                "Acesso do aluno",
+                                "Ao salvar, o app gera um codigo de 24h para voce enviar ao aluno."
+                            )
+                        }
+                    }
                 } else {
                     item { DetailInfoRow("Nome", student?.name.orEmpty()) }
-                    item { DetailInfoRow("Email", student?.email.orEmpty().ifBlank { "Sem email" }) }
                     item { DetailInfoRow("Telefone", student?.phone.orEmpty().ifBlank { "Sem telefone" }) }
-                    item { DetailInfoRow("Rotina", student?.routine.orEmpty().ifBlank { student?.planName ?: "Sem rotina" }) }
-                    item { DetailInfoRow("Status", statusLabel(student?.status.orEmpty())) }
                 }
             }
-            "Treinos" -> item { EmptyDetailState("Nenhum treino vinculado ainda.") }
-            else -> item { EmptyDetailState("Nenhuma coleta registrada ainda.") }
+            "Rotinas" -> {
+                if (editing) {
+                    item {
+                        RoutineSearchSelectorHeader(
+                            selectedRoutine = routine,
+                            query = routineQuery,
+                            onQueryChange = {
+                                routineQuery = it
+                                routinePickerOpen = true
+                            },
+                            open = routinePickerOpen,
+                            onToggle = { routinePickerOpen = !routinePickerOpen }
+                        )
+                    }
+                    if (routinePickerOpen) {
+                        if (routines.isEmpty()) {
+                            item { EmptyDetailState("Crie uma rotina antes de vincular ao cliente.") }
+                        } else if (filteredRoutines.isEmpty()) {
+                            item { EmptyDetailState("Nenhuma rotina encontrada.") }
+                        } else {
+                            items(filteredRoutines) { entry ->
+                                SelectableRoutineListRow(
+                                    routine = entry,
+                                    selected = entry.name.equals(routine, ignoreCase = true),
+                                    onClick = {
+                                        routine = entry.name
+                                        routineQuery = entry.name
+                                        routinePickerOpen = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    item {
+                        if (currentRoutine == null && routine.isBlank()) {
+                            EmptyDetailState("Nenhuma rotina vinculada ainda.")
+                        } else {
+                            StudentRoutineCard(
+                                routineName = currentRoutine?.name ?: routine.ifBlank { student?.planName ?: "Sem rotina" },
+                                description = currentRoutine?.description.orEmpty(),
+                                status = currentRoutine?.status ?: "active"
+                            )
+                        }
+                    }
+                }
+            }
+            else -> {
+                if (editing) {
+                    item {
+                        DetailInfoRow("Valor mensal", formatMoneyLabel(routineMonthlyFee.ifBlank { student?.monthlyFee.orEmpty() }))
+                    }
+                    item { BillingDayPicker(billingDayInt) { billingDay = it.toString() } }
+                } else {
+                    item {
+                        BillingSummaryCard(
+                            billingDay = student?.billingDay ?: billingDayInt,
+                            monthlyFee = routineMonthlyFee.ifBlank { student?.monthlyFee.orEmpty() },
+                            dueToday = isBillingDueToday,
+                            onGenerateCharge = {
+                                Toast.makeText(
+                                    context,
+                                    "Cobrança gerada para ${student?.name ?: name} no dia $billingDayInt.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -391,17 +497,15 @@ fun GroupDetailScreen(
         onDelete = if (group != null && onDelete != null) ({ onDelete(group.id) }) else null,
         saveEnabled = name.isNotBlank()
     ) {
-        item { DetailTabs(listOf("Dados", "Alunos", "Treinos"), tab) { tab = it } }
+        item { DetailTabs(listOf("Dados", "Alunos", "Eventos"), tab) { tab = it } }
         when (tab) {
             "Dados" -> {
                 if (editing) {
                     item { FormTextField(name, { name = it }, "Nome do grupo") }
                     item { FormTextField(description, { description = it }, "Descricao") }
-                    item { StatusPicker(status) { status = it } }
                 } else {
                     item { DetailInfoRow("Nome", group?.name.orEmpty()) }
                     item { DetailInfoRow("Descricao", group?.description.orEmpty().ifBlank { "Sem descricao" }) }
-                    item { DetailInfoRow("Status", directoryStatusLabel(group?.status.orEmpty())) }
                     item { DetailInfoRow("Alunos", "${members.size} selecionados") }
                 }
             }
@@ -428,7 +532,7 @@ fun GroupDetailScreen(
                     items(members) { student -> DirectoryListRow(student.name, onClick = {}) }
                 }
             }
-            else -> item { EmptyDetailState("Nenhum treino vinculado a este grupo.") }
+            else -> item { EmptyDetailState("Nenhum evento vinculado a este grupo.") }
         }
     }
 }
@@ -574,11 +678,7 @@ fun calendarFromEventDate(value: String): Calendar {
 
 @Composable
 fun DetailTabs(tabs: List<String>, selected: String, onSelected: (String) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        tabs.forEach { tab ->
-            SlimFilterBadge(tab, selected == tab, { onSelected(tab) }, Modifier.weight(1f))
-        }
-    }
+    SegmentedFilterBar(options = tabs, selected = selected, onSelected = onSelected)
 }
 
 @Composable
@@ -590,6 +690,221 @@ fun DetailInfoRow(label: String, value: String) {
         }
     }
 }
+
+@Composable
+fun StudentRoutineCard(routineName: String, description: String, status: String) {
+    Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.FitnessCenter, contentDescription = null, tint = Lime, modifier = Modifier.size(22.dp))
+                Text(
+                    routineName.ifBlank { "Sem rotina" },
+                    modifier = Modifier.padding(start = 10.dp).weight(1f),
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
+            }
+            val lines = description.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() && !it.startsWith("Valor:") }
+                .toList()
+            if (lines.isEmpty()) {
+                Text("Estrutura ainda nao definida.", color = Color.White.copy(alpha = .68f), fontSize = 13.sp)
+            } else {
+                lines.forEach { line ->
+                    Surface(color = PurpleBackground, shape = RoundedCornerShape(10.dp)) {
+                        Text(
+                            line,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                            color = Color.White.copy(alpha = .78f),
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun RoutineSearchSelectorHeader(
+    selectedRoutine: String,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    open: Boolean,
+    onToggle: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Rotina do cliente", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            TextButton(onClick = onToggle, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text(if (open) "Fechar" else "Trocar", color = Lime, fontWeight = FontWeight.Bold)
+            }
+        }
+        if (!open && selectedRoutine.isNotBlank()) {
+            StudentRoutineCard(
+                routineName = selectedRoutine,
+                description = "Toque em Trocar para selecionar outra rotina.",
+                status = "active"
+            )
+        } else {
+            StudentSearchBar(
+                value = query,
+                onValueChange = onQueryChange,
+                placeholder = "Pesquisar rotina",
+                modifier = Modifier.shadow(14.dp, RoundedCornerShape(50)).imePadding()
+            )
+        }
+    }
+}
+
+@Composable
+fun SelectableRoutineListRow(routine: DirectoryEntry, selected: Boolean, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(24.dp)
+                    .clip(CircleShape)
+                    .background(if (selected) Lime else PurpleSurface),
+                contentAlignment = Alignment.Center
+            ) {
+                if (selected) Icon(Icons.Outlined.Check, contentDescription = null, tint = PurpleDeep, modifier = Modifier.size(15.dp))
+            }
+            Column(Modifier.padding(start = 10.dp).weight(1f)) {
+                Text(
+                    routine.name,
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (routine.description.isNotBlank()) {
+                    Text(
+                        routine.description,
+                        color = Color.White.copy(alpha = .56f),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Icon(
+                Icons.AutoMirrored.Outlined.ArrowForward,
+                contentDescription = "Selecionar rotina",
+                modifier = Modifier.size(18.dp),
+                tint = Color.White.copy(alpha = 0.78f)
+            )
+        }
+        HorizontalDivider(color = NavigationPurple, thickness = 0.8.dp)
+    }
+}
+
+@Composable
+fun BillingSummaryCard(
+    billingDay: Int,
+    monthlyFee: String,
+    dueToday: Boolean,
+    onGenerateCharge: () -> Unit
+) {
+    Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Payments, contentDescription = null, tint = Lime, modifier = Modifier.size(24.dp))
+                Column(Modifier.padding(start = 10.dp).weight(1f)) {
+                    Text("Cobrança mensal", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text("Vence todo dia $billingDay", color = Color.White.copy(alpha = .62f), fontSize = 12.sp)
+                }
+                StatusBadge(if (dueToday) "Cobrar hoje" else "Agendada", if (dueToday) Color(0xFFFFC107) else Lime)
+            }
+            DetailInfoRow("Valor", formatMoneyLabel(monthlyFee))
+            if (dueToday) {
+                Surface(color = Color(0xFFFFC107).copy(alpha = .18f), shape = RoundedCornerShape(12.dp)) {
+                    Text(
+                        "Hoje é dia de cobrança deste cliente.",
+                        Modifier.fillMaxWidth().padding(12.dp),
+                        color = Color(0xFFFFD166),
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+            Button(
+                onClick = onGenerateCharge,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                shape = RoundedCornerShape(50)
+            ) {
+                Icon(Icons.Outlined.Payments, contentDescription = null)
+                Text("Gerar cobrança", Modifier.padding(start = 8.dp), fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun BillingDayPicker(day: Int, onDayChange: (Int) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("Dia da cobrança", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("S", "T", "Q", "Q", "S", "S", "D").forEach { label ->
+                        Text(
+                            label,
+                            modifier = Modifier.weight(1f),
+                            color = Color.White.copy(alpha = .52f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+                (1..28).chunked(7).forEach { week ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        week.forEach { option ->
+                            val selected = day == option
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp)
+                                    .clickable { onDayChange(option) },
+                                color = if (selected) Lime else PurpleBackground,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Text(
+                                        option.toString(),
+                                        color = if (selected) PurpleDeep else Color.White,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fun formatMoneyLabel(value: String): String =
+    value.ifBlank { "R$ 0,00" }.let { raw ->
+        if (raw.startsWith("R$")) raw else "R$ $raw"
+    }
 
 @Composable
 fun EmptyDetailState(message: String) {
