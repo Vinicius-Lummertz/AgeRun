@@ -12,6 +12,5 @@ object AgeGoApi {
     fun studentsUrl() = "$baseUrl/students"
     fun workoutsUrl() = "$baseUrl/workouts"
     fun announcementsUrl() = "$baseUrl/announcements"
-    fun groupsUrl() = "$baseUrl/groups"
     fun uploadMediaUrl() = "$baseUrl/upload-media"
 }

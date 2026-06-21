@@ -1,13 +1,16 @@
 ﻿package com.example.myapplication
 
 import android.app.DatePickerDialog
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -66,6 +69,7 @@ import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DirectionsRun
 import androidx.compose.material.icons.outlined.Edit
@@ -115,7 +119,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -139,6 +145,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
+import coil.compose.AsyncImage
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -148,8 +155,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.myapplication.data.Announcement
-import com.example.myapplication.data.CommunityPost
-import com.example.myapplication.data.CommunityPostType
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.Workout
 import com.example.myapplication.data.Event
@@ -243,7 +248,7 @@ fun DirectoryFormScreen(
                     )
                 }
             }
-            items(filteredStudents) { student ->
+            items(filteredStudents, key = { it.id }) { student ->
                 val selected = student.id in selectedStudentIds
                 SelectableStudentRow(
                     student = student,
@@ -283,7 +288,9 @@ fun StudentDetailScreen(
     var status by remember(student?.id) { mutableStateOf(student?.status ?: "active") }
     var billingDay by remember(student?.id) { mutableStateOf((student?.billingDay ?: 5).coerceIn(1, 28).toString()) }
     val title = if (student == null) "Novo aluno" else student.name
-    val currentRoutine = routines.firstOrNull { it.name.equals(routine, ignoreCase = true) || it.name.equals(student?.planName, ignoreCase = true) }
+    val currentRoutine = routines.firstOrNull {
+        it.id == routine || it.name.equals(routine, ignoreCase = true) || it.name.equals(student?.planName, ignoreCase = true)
+    }
     val routineMonthlyFee = currentRoutine?.description?.let { extractRoutinePrice(it) }.orEmpty()
     val filteredRoutines = routines.filter { entry ->
         entry.name.contains(routineQuery, ignoreCase = true) ||
@@ -292,7 +299,7 @@ fun StudentDetailScreen(
     }
     val billingDayInt = billingDay.toIntOrNull()?.coerceIn(1, 28) ?: 5
     val isBillingDueToday = billingDayInt == Calendar.getInstance().get(Calendar.DAY_OF_MONTH).coerceAtMost(28)
-    val tabs = if (student == null) listOf("Dados", "Rotinas") else listOf("Dados", "Rotinas", "Faturamento")
+    val tabs = if (student == null) listOf("Dados", "Plano de treino") else listOf("Dados", "Plano de treino", "Faturamento")
     val canSave = name.isNotBlank() && phone.isNotBlank() && routine.isNotBlank()
 
     EditableDetailScaffold(
@@ -301,9 +308,17 @@ fun StudentDetailScreen(
         onBack = onBack,
         onEdit = { editing = true },
         onSave = {
-            onSave(
-                Student(
-                    id = student?.id.orEmpty(),
+            val updated = student?.copy(
+                    name = name.trim(),
+                    email = email.trim(),
+                    phone = phone.trim(),
+                    routine = routine.trim(),
+                    planName = routine.trim().ifBlank { "Sem rotina" },
+                    status = status,
+                    billingDay = billingDayInt,
+                    monthlyFee = routineMonthlyFee
+                ) ?: Student(
+                    id = "",
                     name = name.trim(),
                     email = email.trim(),
                     phone = phone.trim(),
@@ -313,7 +328,7 @@ fun StudentDetailScreen(
                     billingDay = billingDayInt,
                     monthlyFee = routineMonthlyFee
                 )
-            )
+            onSave(updated)
             editing = false
         },
         onDelete = if (student != null && onDelete != null) ({ onDelete(student.id) }) else null,
@@ -323,6 +338,7 @@ fun StudentDetailScreen(
         when (tab) {
             "Dados" -> {
                 if (editing) {
+                    item { DetailInfoRow("Dados pessoais", "Comece pelo essencial. O aluno completa foto e email no primeiro acesso.") }
                     item { FormTextField(name, { name = it }, "Nome") }
                     item { FormTextField(phone, { phone = it }, "Telefone") }
                     if (student != null) {
@@ -343,10 +359,37 @@ fun StudentDetailScreen(
                 } else {
                     item { DetailInfoRow("Nome", student?.name.orEmpty()) }
                     item { DetailInfoRow("Telefone", student?.phone.orEmpty().ifBlank { "Sem telefone" }) }
+                    if (!student?.accessCode.isNullOrBlank()) {
+                        item {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("PIN do aluno", student.accessCode))
+                                    Toast.makeText(context, "PIN copiado", Toast.LENGTH_SHORT).show()
+                                },
+                                color = PurpleSurface,
+                                shape = RoundedCornerShape(20.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(18.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                ) {
+                                    Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = Lime)
+                                    Column(Modifier.weight(1f)) {
+                                        Text("PIN de primeiro acesso", color = Color.White.copy(alpha = .64f), fontSize = 12.sp)
+                                        Text(student.accessCode, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                                        Text("Toque para copiar • válido por 24 horas", color = Lime, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            "Rotinas" -> {
+            "Plano de treino" -> {
                 if (editing) {
+                    item { DetailInfoRow("Como o aluno vai treinar?", "Selecione um treino existente ou crie um treino exclusivo para personalizar os dias.") }
                     item {
                         RoutineSearchSelectorHeader(
                             selectedRoutine = routine,
@@ -361,16 +404,16 @@ fun StudentDetailScreen(
                     }
                     if (routinePickerOpen) {
                         if (routines.isEmpty()) {
-                            item { EmptyDetailState("Crie uma rotina antes de vincular ao cliente.") }
+                            item { EmptyDetailState("Crie um treino antes de vinculá-lo ao aluno.") }
                         } else if (filteredRoutines.isEmpty()) {
-                            item { EmptyDetailState("Nenhuma rotina encontrada.") }
+                            item { EmptyDetailState("Nenhum treino encontrado.") }
                         } else {
-                            items(filteredRoutines) { entry ->
+                            items(filteredRoutines, key = { it.id }) { entry ->
                                 SelectableRoutineListRow(
                                     routine = entry,
-                                    selected = entry.name.equals(routine, ignoreCase = true),
+                                    selected = entry.id == routine || entry.name.equals(routine, ignoreCase = true),
                                     onClick = {
-                                        routine = entry.name
+                                        routine = entry.id
                                         routineQuery = entry.name
                                         routinePickerOpen = false
                                     }
@@ -381,7 +424,7 @@ fun StudentDetailScreen(
                 } else {
                     item {
                         if (currentRoutine == null && routine.isBlank()) {
-                            EmptyDetailState("Nenhuma rotina vinculada ainda.")
+                            EmptyDetailState("Nenhum plano de treino vinculado ainda.")
                         } else {
                             StudentRoutineCard(
                                 routineName = currentRoutine?.name ?: routine.ifBlank { student?.planName ?: "Sem rotina" },
@@ -421,136 +464,37 @@ fun StudentDetailScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WorkoutDetailScreen(
-    workout: Workout?,
-    onBack: () -> Unit,
-    onSave: (Workout) -> Unit,
-    onDelete: ((String) -> Unit)?
-) {
-    var editing by remember(workout?.id) { mutableStateOf(workout == null) }
-    var tab by remember { mutableStateOf("Dados") }
-    var name by remember(workout?.id) { mutableStateOf(workout?.name.orEmpty()) }
-    var description by remember(workout?.id) { mutableStateOf(workout?.description.orEmpty()) }
-    var iconName by remember(workout?.id) { mutableStateOf(workout?.iconName ?: "directions_run") }
-    var status by remember(workout?.id) { mutableStateOf(workout?.status ?: "active") }
-
-    EditableDetailScaffold(
-        title = workout?.name ?: "Novo treino",
-        editing = editing,
-        onBack = onBack,
-        onEdit = { editing = true },
-        onSave = {
-            onSave(Workout(workout?.id.orEmpty(), name.trim(), description.trim(), iconName.trim(), status))
-            editing = false
-        },
-        onDelete = if (workout != null && onDelete != null) ({ onDelete(workout.id) }) else null,
-        saveEnabled = name.isNotBlank()
-    ) {
-        item { DetailTabs(listOf("Dados", "Etapas", "Alunos"), tab) { tab = it } }
-        when (tab) {
-            "Dados" -> {
-                if (editing) {
-                    item { FormTextField(name, { name = it }, "Nome do treino") }
-                    item { FormTextField(description, { description = it }, "Descricao") }
-                    item { FormTextField(iconName, { iconName = it }, "Icone") }
-                    item { StatusPicker(status) { status = it } }
-                } else {
-                    item { DetailInfoRow("Nome", workout?.name.orEmpty()) }
-                    item { DetailInfoRow("Descricao", workout?.description.orEmpty().ifBlank { "Sem descricao" }) }
-                    item { DetailInfoRow("Status", workoutStatusLabel(workout?.status.orEmpty())) }
-                }
-            }
-            "Etapas" -> item { EmptyDetailState("As etapas do treino serao exibidas aqui.") }
-            else -> item { EmptyDetailState("Nenhum aluno vinculado a este treino.") }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun GroupDetailScreen(
-    group: DirectoryEntry?,
-    students: List<Student>,
-    onBack: () -> Unit,
-    onSave: (DirectoryEntry) -> Unit,
-    onDelete: ((String) -> Unit)?
-) {
-    var editing by remember(group?.id) { mutableStateOf(group == null) }
-    var tab by remember { mutableStateOf("Dados") }
-    var name by remember(group?.id) { mutableStateOf(group?.name.orEmpty()) }
-    var description by remember(group?.id) { mutableStateOf(group?.description.orEmpty()) }
-    var status by remember(group?.id) { mutableStateOf(group?.status ?: "active") }
-    var selectedIds by remember(group?.id) { mutableStateOf(group?.studentIds.orEmpty().toSet()) }
-    var query by remember { mutableStateOf("") }
-    val filteredStudents = students.filter { it.name.contains(query, true) || it.email.contains(query, true) || it.phone.contains(query, true) }
-    val members = students.filter { it.id in selectedIds }
-
-    EditableDetailScaffold(
-        title = group?.name ?: "Novo grupo",
-        editing = editing,
-        onBack = onBack,
-        onEdit = { editing = true },
-        onSave = {
-            onSave(DirectoryEntry(group?.id.orEmpty(), name.trim(), status, description.trim(), selectedIds.toList()))
-            editing = false
-        },
-        onDelete = if (group != null && onDelete != null) ({ onDelete(group.id) }) else null,
-        saveEnabled = name.isNotBlank()
-    ) {
-        item { DetailTabs(listOf("Dados", "Alunos", "Eventos"), tab) { tab = it } }
-        when (tab) {
-            "Dados" -> {
-                if (editing) {
-                    item { FormTextField(name, { name = it }, "Nome do grupo") }
-                    item { FormTextField(description, { description = it }, "Descricao") }
-                } else {
-                    item { DetailInfoRow("Nome", group?.name.orEmpty()) }
-                    item { DetailInfoRow("Descricao", group?.description.orEmpty().ifBlank { "Sem descricao" }) }
-                    item { DetailInfoRow("Alunos", "${members.size} selecionados") }
-                }
-            }
-            "Alunos" -> {
-                if (editing) {
-                    item {
-                        StudentSearchBar(
-                            value = query,
-                            onValueChange = { query = it },
-                            placeholder = "Pesquisar aluno",
-                            modifier = Modifier.shadow(14.dp, RoundedCornerShape(50)).imePadding()
-                        )
-                    }
-                    items(filteredStudents) { student ->
-                        val selected = student.id in selectedIds
-                        SelectableStudentRow(
-                            student = student,
-                            selected = selected,
-                            onClick = { selectedIds = if (selected) selectedIds - student.id else selectedIds + student.id }
-                        )
-                    }
-                } else {
-                    if (members.isEmpty()) item { EmptyDetailState("Nenhum aluno selecionado.") }
-                    items(members) { student -> DirectoryListRow(student.name, onClick = {}) }
-                }
-            }
-            else -> item { EmptyDetailState("Nenhum evento vinculado a este grupo.") }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 fun EventDetailScreen(
     event: Event?,
     onBack: () -> Unit,
     onSave: (Event) -> Unit,
-    onDelete: ((String) -> Unit)?
+    onDelete: ((String) -> Unit)?,
+    onOpenEvent: (() -> Unit)? = null,
+    onStartGroupRun: (() -> Unit)? = null,
+    onFinishGroupRun: (() -> Unit)? = null,
+    onUploadMedia: (suspend (Uri) -> String)? = null
 ) {
     var editing by remember(event?.id) { mutableStateOf(event == null) }
     var tab by remember { mutableStateOf("Dados") }
     var name by remember(event?.id) { mutableStateOf(event?.name.orEmpty()) }
     var eventDate by remember(event?.id) { mutableStateOf(event?.eventDate ?: defaultEventDate()) }
     var location by remember(event?.id) { mutableStateOf(event?.location.orEmpty()) }
+    var latitude by remember(event?.id) { mutableStateOf(event?.latitude) }
+    var longitude by remember(event?.id) { mutableStateOf(event?.longitude) }
     var description by remember(event?.id) { mutableStateOf(event?.description.orEmpty()) }
+    var coverPhotoUrl by remember(event?.id) { mutableStateOf(event?.coverPhotoUrl) }
+    var isUploadingCover by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val coverPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null && onUploadMedia != null) {
+            isUploadingCover = true
+            scope.launch {
+                runCatching { onUploadMedia(uri) }
+                    .onSuccess { coverPhotoUrl = it }
+                isUploadingCover = false
+            }
+        }
+    }
 
     EditableDetailScaffold(
         title = event?.name ?: "Novo evento",
@@ -558,19 +502,55 @@ fun EventDetailScreen(
         onBack = onBack,
         onEdit = { editing = true },
         onSave = {
-            onSave(Event(event?.id.orEmpty(), name.trim(), description.trim(), eventDate.trim(), location.trim()))
+            onSave(
+                Event(
+                    id = event?.id.orEmpty(),
+                    name = name.trim(),
+                    description = description.trim(),
+                    eventDate = eventDate.trim(),
+                    location = location.trim(),
+                    latitude = latitude,
+                    longitude = longitude,
+                    coverPhotoUrl = coverPhotoUrl
+                )
+            )
             editing = false
         },
         onDelete = if (event != null && onDelete != null) ({ onDelete(event.id) }) else null,
         saveEnabled = name.isNotBlank() && eventDate.isNotBlank()
     ) {
-        item { DetailTabs(listOf("Dados", "Presenca", "Comunicacao"), tab) { tab = it } }
+        item {
+            Box(Modifier.fillMaxWidth().height(140.dp).clip(RoundedCornerShape(16.dp)).background(PurpleSurface)) {
+                if (coverPhotoUrl != null) {
+                    AsyncImage(
+                        model = coverPhotoUrl,
+                        contentDescription = "Capa do evento",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                if (editing && onUploadMedia != null) {
+                    Button(
+                        onClick = { coverPickerLauncher.launch("image/*") },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Black.copy(alpha = .6f), contentColor = Color.White)
+                    ) {
+                        Text(if (isUploadingCover) "Enviando..." else "Escolher capa")
+                    }
+                }
+            }
+        }
+        item { DetailTabs(listOf("Dados", "Presença", "Corrida"), tab) { tab = it } }
         when (tab) {
             "Dados" -> {
                 if (editing) {
                     item { FormTextField(name, { name = it }, "Nome do evento") }
                     item { EventDatePickerField(eventDate, { eventDate = it }) }
-                    item { FormTextField(location, { location = it }, "Local") }
+                    item {
+                        EventLocationPicker(location, latitude, longitude) { label, lat, lon ->
+                            location = label; latitude = lat; longitude = lon
+                        }
+                    }
                     item { FormTextField(description, { description = it }, "Descricao") }
                 } else {
                     item { DetailInfoRow("Nome", event?.name.orEmpty()) }
@@ -579,8 +559,43 @@ fun EventDetailScreen(
                     item { DetailInfoRow("Descricao", event?.description.orEmpty().ifBlank { "Sem descricao" }) }
                 }
             }
-            "Presenca" -> item { EmptyDetailState("Nenhuma presenca registrada.") }
-            else -> item { EmptyDetailState("Nenhuma comunicacao vinculada.") }
+            "Presença" -> {
+                if (event == null) item { EmptyDetailState("Salve o evento para gerar o QR Code.") }
+                else {
+                    if (event.groupStatus == "waiting" && onOpenEvent != null) {
+                        item {
+                            Button(
+                                onClick = onOpenEvent,
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                                shape = RoundedCornerShape(50)
+                            ) { Text("Iniciar evento", fontWeight = FontWeight.Bold) }
+                        }
+                        item { Text("Ao iniciar, o QR Code será liberado para confirmação de presença.", color = Color.White.copy(alpha = .65f), fontSize = 13.sp) }
+                    } else {
+                        item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { EventQrCode(event.id) } }
+                        item { Text("Os alunos apontam a câmera para este código e confirmam a presença na tela do evento.", color = Color.White.copy(alpha = .65f), fontSize = 13.sp) }
+                        if (onStartGroupRun != null && onFinishGroupRun != null && event.groupStatus != "finished") {
+                            item {
+                                Button(
+                                    onClick = if (event.groupStatus == "running") onFinishGroupRun else onStartGroupRun,
+                                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                                    shape = RoundedCornerShape(50)
+                                ) {
+                                    Text(if (event.groupStatus == "running") "Finalizar corrida" else "Iniciar corrida em grupo", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                        items(event.attendees, key = { it.studentId }) { attendee -> DirectoryListRow(attendee.name, onClick = {}) }
+                    }
+                }
+            }
+            else -> {
+                if (event != null && onStartGroupRun != null && onFinishGroupRun != null) {
+                    item { EventGroupControlPanel(event, onStartGroupRun, onFinishGroupRun) }
+                } else item { EmptyDetailState("Salve o evento para iniciar a corrida em grupo.") }
+            }
         }
     }
 }
@@ -624,29 +639,14 @@ fun EditableDetailScaffold(
 
 @Composable
 fun EventDatePickerField(value: String, onValueChange: (String) -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    var showCalendar by remember { mutableStateOf(false) }
     val calendar = remember(value) { calendarFromEventDate(value) }
     val displayValue = remember(value) {
         SimpleDateFormat("dd/MM/yyyy", Locale.forLanguageTag("pt-BR")).format(calendar.time)
     }
 
     Surface(
-        modifier = Modifier.fillMaxWidth().clickable {
-            DatePickerDialog(
-                context,
-                { _, year, month, day ->
-                    val selected = calendarFromEventDate(value).apply {
-                        set(Calendar.YEAR, year)
-                        set(Calendar.MONTH, month)
-                        set(Calendar.DAY_OF_MONTH, day)
-                    }
-                    onValueChange(SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(selected.time))
-                },
-                calendar.get(Calendar.YEAR),
-                calendar.get(Calendar.MONTH),
-                calendar.get(Calendar.DAY_OF_MONTH)
-            ).show()
-        },
+        modifier = Modifier.fillMaxWidth().clickable { showCalendar = true },
         color = PurpleSurface,
         shape = RoundedCornerShape(16.dp)
     ) {
@@ -660,6 +660,30 @@ fun EventDatePickerField(value: String, onValueChange: (String) -> Unit) {
                 Text(displayValue, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         }
+    }
+    if (showCalendar) {
+        WeekScheduleDialog(
+            routineName = "Selecione o dia do evento",
+            routineDescription = "",
+            selectedDays = setOf(value.take(10)).filter { it.isNotBlank() }.toSet(),
+            onSelectedDaysChange = { selected ->
+                selected.firstOrNull()?.let { key ->
+                    val next = calendarFromEventDate(value)
+                    val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(key)
+                    if (date != null) {
+                        val chosen = Calendar.getInstance().apply { time = date }
+                        next.set(Calendar.YEAR, chosen.get(Calendar.YEAR))
+                        next.set(Calendar.MONTH, chosen.get(Calendar.MONTH))
+                        next.set(Calendar.DAY_OF_MONTH, chosen.get(Calendar.DAY_OF_MONTH))
+                        onValueChange(SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(next.time))
+                    }
+                }
+            },
+            onDismiss = { showCalendar = false },
+            title = "Data do evento",
+            singleSelection = true,
+            helpText = "Escolha uma data para o encontro."
+        )
     }
 }
 
@@ -705,24 +729,11 @@ fun StudentRoutineCard(routineName: String, description: String, status: String)
                     fontSize = 17.sp
                 )
             }
-            val lines = description.lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotBlank() && !it.startsWith("Valor:") }
-                .toList()
-            if (lines.isEmpty()) {
+            val sections = parseWorkoutStructure(description)
+            if (sections.isEmpty()) {
                 Text("Estrutura ainda nao definida.", color = Color.White.copy(alpha = .68f), fontSize = 13.sp)
             } else {
-                lines.forEach { line ->
-                    Surface(color = PurpleBackground, shape = RoundedCornerShape(10.dp)) {
-                        Text(
-                            line,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
-                            color = Color.White.copy(alpha = .78f),
-                            fontSize = 13.sp,
-                            lineHeight = 18.sp
-                        )
-                    }
-                }
+                WorkoutStructureTimeline(sections)
             }
         }
     }
@@ -738,7 +749,7 @@ fun RoutineSearchSelectorHeader(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Rotina do cliente", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            Text("Treino do cliente", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.weight(1f))
             TextButton(onClick = onToggle, contentPadding = PaddingValues(horizontal = 8.dp)) {
                 Text(if (open) "Fechar" else "Trocar", color = Lime, fontWeight = FontWeight.Bold)
             }
@@ -746,14 +757,14 @@ fun RoutineSearchSelectorHeader(
         if (!open && selectedRoutine.isNotBlank()) {
             StudentRoutineCard(
                 routineName = selectedRoutine,
-                description = "Toque em Trocar para selecionar outra rotina.",
+                description = "Toque em Trocar para selecionar outro treino.",
                 status = "active"
             )
         } else {
             StudentSearchBar(
                 value = query,
                 onValueChange = onQueryChange,
-                placeholder = "Pesquisar rotina",
+                placeholder = "Pesquisar treino",
                 modifier = Modifier.shadow(14.dp, RoundedCornerShape(50)).imePadding()
             )
         }
@@ -804,7 +815,7 @@ fun SelectableRoutineListRow(routine: DirectoryEntry, selected: Boolean, onClick
             }
             Icon(
                 Icons.AutoMirrored.Outlined.ArrowForward,
-                contentDescription = "Selecionar rotina",
+                contentDescription = "Selecionar treino",
                 modifier = Modifier.size(18.dp),
                 tint = Color.White.copy(alpha = 0.78f)
             )

@@ -82,6 +82,9 @@ import androidx.compose.material.icons.outlined.Poll
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.ArrowDownward
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -144,8 +147,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.myapplication.data.Announcement
-import com.example.myapplication.data.CommunityPost
-import com.example.myapplication.data.CommunityPostType
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.Workout
 import com.example.myapplication.data.Event
@@ -172,6 +173,7 @@ fun <T> DirectoryScreen(
     actions: List<DirectoryAction>,
     items: List<T>,
     loading: Boolean,
+    itemId: (T) -> Any,
     itemTitle: (T) -> String,
     itemStatus: (T) -> String,
     itemMatchesQuery: (T, String) -> Boolean,
@@ -274,22 +276,22 @@ fun <T> DirectoryScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    SegmentedFilterBar(
-                                        options = filters,
-                                        selected = selectedFilter,
-                                        onSelected = onFilterSelected
-                                    )
                                     StudentSearchButton(
                                         value = query,
                                         placeholder = searchPlaceholder,
                                         onClick = { searchMode = true }
+                                    )
+                                    SegmentedFilterBar(
+                                        options = filters,
+                                        selected = selectedFilter,
+                                        onSelected = onFilterSelected
                                     )
                                 }
                             }
                         }
                     }
                     if (!loading) {
-                        items(filtered) { item ->
+                        items(filtered, key = { itemId(it) }) { item ->
                             DirectoryListRow(title = itemTitle(item), onClick = { onItemClick(item) })
                         }
                     }
@@ -328,7 +330,6 @@ fun StudentsScreen(
     students: List<Student>,
     loading: Boolean,
     onBack: () -> Unit,
-    onGroupsClick: () -> Unit,
     onNewStudent: () -> Unit,
     onStudentClick: (Student) -> Unit
 ) {
@@ -340,7 +341,12 @@ fun StudentsScreen(
     val density = LocalDensity.current
     val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
     val filtered = students.filter { student ->
-        student.name.contains(query, true) && (filter == "Todos" || statusLabel(student.status) == filter)
+        val matchesFilter = when (filter) {
+            "Todos" -> true
+            "Ciclo completo", "Evoluindo" -> student.status == "active"
+            else -> statusLabel(student.status) == filter
+        }
+        student.name.contains(query, true) && matchesFilter
     }
 
     BackHandler(enabled = searchMode) {
@@ -388,12 +394,6 @@ fun StudentsScreen(
                 horizontalArrangement = Arrangement.spacedBy(18.dp)
             ) {
                 StudentActionCircle("Novo aluno", "+") { onNewStudent() }
-                ShortcutCircleSvg(
-                    label = "Grupos",
-                    iconRes = R.drawable.ic_option_grupos,
-                    containerColor = PurpleSurface,
-                    onClick = onGroupsClick
-                )
             }
         }
 
@@ -428,26 +428,26 @@ fun StudentsScreen(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    SegmentedFilterBar(
-                                        options = listOf("Todos", "Em dia", "A pagar"),
-                                        selected = filter,
-                                        onSelected = { filter = it }
-                                    )
                                     StudentSearchButton(
                                         value = query,
                                         onClick = { searchMode = true }
+                                    )
+                                    SegmentedFilterBar(
+                                        options = listOf("Todos", "Em dia", "A pagar", "Ciclo completo", "Evoluindo"),
+                                        selected = filter,
+                                        onSelected = { filter = it }
                                     )
                                 }
                             }
                         }
                         if (!loading) {
-                            items(filtered) { student ->
+                            items(filtered, key = { it.id }) { student ->
                                 StudentListRow(student = student, onClick = { onStudentClick(student) })
                             }
                         }
                     } else {
                         if (!loading) {
-                            items(filtered) { student ->
+                            items(filtered, key = { it.id }) { student ->
                                 StudentListRow(student = student, onClick = { onStudentClick(student) })
                             }
                         }
@@ -534,49 +534,9 @@ fun SegmentedFilterBar(
     onSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .border(1.dp, NavigationPurple.copy(alpha = .72f), RoundedCornerShape(14.dp)),
-        color = Color.Transparent,
-        shape = RoundedCornerShape(14.dp)
-    ) {
-        Row(Modifier.fillMaxWidth().height(40.dp)) {
-            options.forEachIndexed { index, option ->
-                val selectedOption = selected == option
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(40.dp)
-                        .clickable { onSelected(option) },
-                    color = if (selectedOption) Lime else Color.Transparent,
-                    shape = when (index) {
-                        0 -> RoundedCornerShape(topStart = 13.dp, bottomStart = 13.dp)
-                        options.lastIndex -> RoundedCornerShape(topEnd = 13.dp, bottomEnd = 13.dp)
-                        else -> RoundedCornerShape(0.dp)
-                    }
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text(
-                            option,
-                            color = if (selectedOption) PurpleBackground else Color.White.copy(alpha = .82f),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-                if (index != options.lastIndex) {
-                    Box(
-                        Modifier
-                            .width(1.dp)
-                            .height(40.dp)
-                            .background(NavigationPurple.copy(alpha = .72f))
-                    )
-                }
-            }
+    LazyRow(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(end = 24.dp)) {
+        items(options, key = { it }) { option ->
+            SlimFilterBadge(option, selected == option, { onSelected(option) })
         }
     }
 }
@@ -647,6 +607,28 @@ fun StudentSearchBar(
 
 @Composable
 fun StudentListRow(student: Student, onClick: () -> Unit) {
+    val workoutProgress = if (student.workoutsTotal > 0) {
+        student.workoutsCompleted.toFloat() / student.workoutsTotal.toFloat()
+    } else {
+        0f
+    }.coerceIn(0f, 1f)
+    val performanceDelta = student.performanceDeltaPercent
+    val performanceIcon = when {
+        performanceDelta == null || performanceDelta == 0 -> Icons.Outlined.Remove
+        performanceDelta > 0 -> Icons.Outlined.ArrowUpward
+        else -> Icons.Outlined.ArrowDownward
+    }
+    val performanceColor = when {
+        performanceDelta == null || performanceDelta == 0 -> Color.White.copy(alpha = .5f)
+        performanceDelta > 0 -> Lime
+        else -> Color(0xFFFFB3BE)
+    }
+    val performanceDescription = when {
+        performanceDelta == null -> "Sem treino concluído para comparar"
+        performanceDelta > 0 -> "$performanceDelta% acima da carga prevista"
+        performanceDelta < 0 -> "${-performanceDelta}% abaixo da carga prevista"
+        else -> "Carga realizada conforme o previsto"
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -681,11 +663,33 @@ fun StudentListRow(student: Student, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            Box(
+                modifier = Modifier.size(30.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    progress = { workoutProgress },
+                    modifier = Modifier.fillMaxSize(),
+                    color = Lime,
+                    trackColor = Color.White.copy(alpha = .18f),
+                    strokeWidth = 3.dp
+                )
+                Text(
+                    text = if (student.workoutsTotal > 0) {
+                        "${student.workoutsCompleted}/${student.workoutsTotal}"
+                    } else {
+                        "—"
+                    },
+                    color = Color.White,
+                    fontSize = 8.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
             Icon(
-                Icons.AutoMirrored.Outlined.ArrowForward,
-                contentDescription = "Abrir aluno",
-                modifier = Modifier.size(18.dp),
-                tint = Color.White.copy(alpha = 0.78f)
+                performanceIcon,
+                contentDescription = performanceDescription,
+                tint = performanceColor,
+                modifier = Modifier.size(18.dp)
             )
         }
         HorizontalDivider(color = NavigationPurple, thickness = 0.8.dp)

@@ -84,6 +84,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Badge
@@ -124,6 +125,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -145,8 +148,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.myapplication.data.Announcement
-import com.example.myapplication.data.CommunityPost
-import com.example.myapplication.data.CommunityPostType
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.TrainingNowUser
 import com.example.myapplication.data.Workout
@@ -163,6 +164,7 @@ import com.example.myapplication.ui.theme.PurpleSurface
 import androidx.compose.ui.text.style.TextAlign
 import coil.compose.AsyncImage
 import kotlin.math.roundToInt
+import kotlin.math.abs
 
 
 @Composable
@@ -204,7 +206,7 @@ fun HomeScreenV2(state: AgeGoUiState, navigate: (String) -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(end = 4.dp)
             ) {
-                items(days) { day ->
+                items(days, key = { it.key }) { day ->
                     DayEventCard(
                         label = day.label,
                         count = state.events.count { it.eventDate.take(10) == day.key },
@@ -267,7 +269,7 @@ fun HomeScreenV2(state: AgeGoUiState, navigate: (String) -> Unit) {
                             }
                         }
                     } else {
-                        items(selectedEvents) { EventCard(it, containerColor = PurpleBackground) }
+                        items(selectedEvents, key = { it.id }) { EventCard(it, containerColor = PurpleBackground, onClick = { navigate("event/${it.id}") }) }
                     }
                 } else {
                     item {
@@ -276,9 +278,7 @@ fun HomeScreenV2(state: AgeGoUiState, navigate: (String) -> Unit) {
                             horizontalArrangement = Arrangement.spacedBy(18.dp)
                         ) {
                             ShortcutCircleSvg("Alunos", R.drawable.ic_option_alunos) { navigate("students") }
-                            ShortcutCircleSvg("Rotinas", R.drawable.ic_option_modalidades) { navigate("modalities") }
                             ShortcutCircleSvg("Treinos", R.drawable.ic_option_treinos) { navigate("workouts") }
-                            ShortcutCircleSvg("Grupos", R.drawable.ic_option_grupos) { navigate("groups") }
                         }
                     }
                     item {
@@ -363,7 +363,7 @@ fun HomeScreen(state: AgeGoUiState, navigate: (String) -> Unit) {
                     }
                 }
             } else {
-                items(selectedEvents) {
+                items(selectedEvents, key = { it.id }) {
                     Box(Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp)) { EventCard(it) }
                 }
             }
@@ -376,6 +376,7 @@ fun HomeScreen(state: AgeGoUiState, navigate: (String) -> Unit) {
                 ShortcutCircle("Alunos", Icons.Outlined.Group) { navigate("students") }
                 ShortcutCircle("Treinos", Icons.Outlined.DirectionsRun) { navigate("workouts") }
                 ShortcutCircle("Avisos", Icons.Outlined.Campaign) { navigate("announcements") }
+                ShortcutCircle("Desafios", Icons.Outlined.Flag) { navigate("challenges") }
             }
         }
         item {
@@ -385,7 +386,7 @@ fun HomeScreen(state: AgeGoUiState, navigate: (String) -> Unit) {
                 fontSize = 20.sp
             )
         }
-        items(state.announcements.take(2)) {
+        items(state.announcements.take(2), key = { it.id }) {
             Box(Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp)) { AnnouncementCard(it) }
         }
         if (state.isLoading) item { LoadingBox() }
@@ -492,9 +493,19 @@ fun ShortcutCircleSvg(
 }
 
 @Composable
-fun TrainingNowBar(users: List<TrainingNowUser>) {
+fun TrainingNowBar(
+    users: List<TrainingNowUser>,
+    students: List<Student> = emptyList()
+) {
     if (users.isEmpty()) return
-    val visibleUsers = users.take(3)
+    val studentAvatarsById = students.associate { it.id to it.avatarUrl }
+    val studentAvatarsByName = students.associate { it.name.lowercase() to it.avatarUrl }
+    val visibleUsers = users.take(3).map { user ->
+        val resolvedAvatar = studentAvatarsById[user.id]?.takeIf { it.isNotBlank() }
+            ?: studentAvatarsByName[user.name.lowercase()]?.takeIf { it.isNotBlank() }
+            ?: user.avatarUrl
+        user.copy(avatarUrl = resolvedAvatar)
+    }
     val remaining = (users.size - visibleUsers.size).coerceAtLeast(0)
     Surface(
         modifier = Modifier.fillMaxWidth().padding(start = 6.dp , end = 6.dp),
@@ -579,11 +590,28 @@ fun ProfileAvatar(
 @Composable
 fun PillBottomBar(
     currentRoute: String?,
-    onNavigate: (String) -> Unit
+    onNavigate: (String) -> Unit,
+    collapsed: Boolean = false,
+    onPlay: (() -> Unit)? = null,
+    items: List<Destination> = destinations
 ) {
-    val selectedIndex = destinations.indexOfFirst { it.route == currentRoute }.coerceAtLeast(0)
+    val selectedIndex = items.indexOfFirst { it.route == currentRoute }.coerceAtLeast(0)
+    val playSlot = items.size / 2
+    val totalSlots = items.size + if (onPlay != null) 1 else 0
     var barInteracting by remember { mutableStateOf(false) }
+    var barCollapsed by remember { mutableStateOf(false) }
     var pendingIndex by remember { mutableStateOf(selectedIndex) }
+    LaunchedEffect(collapsed) { barCollapsed = collapsed }
+    val barScale by animateFloatAsState(
+        targetValue = if (barCollapsed) 0.88f else 1f,
+        animationSpec = tween(durationMillis = 180),
+        label = "bottom-bar-scale"
+    )
+    val barAlpha by animateFloatAsState(
+        targetValue = if (barCollapsed) 0.68f else 1f,
+        animationSpec = tween(durationMillis = 180),
+        label = "bottom-bar-alpha"
+    )
     val barHeight by animateDpAsState(
         targetValue = if (barInteracting) 74.dp else 68.dp,
         animationSpec = tween(durationMillis = 140),
@@ -598,7 +626,13 @@ fun PillBottomBar(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 36.dp),
+            .padding(bottom = 36.dp)
+            .graphicsLayer {
+                scaleX = barScale
+                scaleY = barScale
+                alpha = barAlpha
+                transformOrigin = TransformOrigin(0.5f, 1f)
+            },
         shape = RoundedCornerShape(50),
         color = NavigationPurple.copy(alpha = 0.60f),
         shadowElevation = 12.dp
@@ -607,17 +641,24 @@ fun PillBottomBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(barHeight)
-                .pointerInput(destinations, currentRoute) {
+                .pointerInput(items, currentRoute) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         barInteracting = true
+                        // A touch is enough to bring a compact bar back before selecting an item.
+                        barCollapsed = false
+                        val verticalThreshold = 14.dp.toPx()
+                        var verticalGesture = false
+                        var currentVisualIndex = 0
 
                         fun indexByPosition(position: Offset): Int {
-                            val widthPerItem = size.width / destinations.size.toFloat()
+                            val widthPerItem = size.width / totalSlots.toFloat()
                             val clampedX = position.x.coerceIn(0f, size.width.toFloat())
-                            return ((clampedX / widthPerItem) - 0.5f)
+                            val visualIndex = ((clampedX / widthPerItem) - 0.5f)
                                 .roundToInt()
-                                .coerceIn(0, destinations.lastIndex)
+                                .coerceIn(0, totalSlots - 1)
+                            currentVisualIndex = visualIndex
+                            return if (onPlay != null && visualIndex > playSlot) visualIndex - 1 else visualIndex
                         }
 
                         pendingIndex = indexByPosition(down.position)
@@ -626,25 +667,33 @@ fun PillBottomBar(
                             event.changes.firstOrNull()?.let { change ->
                                 if (change.pressed) {
                                     pendingIndex = indexByPosition(change.position)
+                                    val verticalDistance = change.position.y - down.position.y
+                                    if (abs(verticalDistance) >= verticalThreshold) {
+                                        verticalGesture = true
+                                        barCollapsed = verticalDistance > 0f
+                                    }
                                 }
                             }
                         } while (event.changes.any { it.pressed })
 
-                        val targetRoute = destinations[pendingIndex].route
+                        val targetRoute = items[pendingIndex].route
                         barInteracting = false
-                        if (targetRoute != currentRoute) {
+                        if (!verticalGesture && onPlay != null && currentVisualIndex == playSlot) {
+                            // The integrated play slot handles its own click.
+                        } else if (!verticalGesture && targetRoute != currentRoute) {
                             onNavigate(targetRoute)
                         }
                     }
                 }
         ) {
-            val itemWidth = maxWidth / destinations.size
+            val itemWidth = maxWidth / totalSlots
             val itemInset = 4.dp
             val indicatorWidth = itemWidth - (itemInset * 2)
             val indicatorHeight = barHeight - (itemInset * 2)
             val indicatorIndex = if (barInteracting || pendingIndex != selectedIndex) pendingIndex else selectedIndex
+            val indicatorVisualIndex = if (onPlay != null && indicatorIndex >= playSlot) indicatorIndex + 1 else indicatorIndex
             val indicatorOffset by animateDpAsState(
-                targetValue = itemWidth * indicatorIndex + itemInset,
+                targetValue = itemWidth * indicatorVisualIndex + itemInset,
                 animationSpec = tween(durationMillis = 260),
                 label = "bottom-bar-indicator"
             )
@@ -663,7 +712,24 @@ fun PillBottomBar(
                 modifier = Modifier.fillMaxSize(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                destinations.forEachIndexed { index, destination ->
+                items.forEachIndexed { index, destination ->
+                    if (onPlay != null && index == playSlot) {
+                        Box(
+                            modifier = Modifier.weight(1f).height(barHeight),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Surface(
+                                modifier = Modifier.size(58.dp).shadow(8.dp, CircleShape).clickable(onClick = onPlay),
+                                shape = CircleShape,
+                                color = Lime,
+                                border = androidx.compose.foundation.BorderStroke(4.dp, PurpleBackground)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Outlined.PlayArrow, "Iniciar corrida", tint = PurpleDeep, modifier = Modifier.size(32.dp))
+                                }
+                            }
+                        }
+                    }
                     val selected = index == indicatorIndex
                     val interactionSource = remember { MutableInteractionSource() }
                     val pressed by interactionSource.collectIsPressedAsState()
@@ -710,11 +776,20 @@ fun PillBottomBar(
 }
 
 @Composable
-fun EventCard(event: Event, containerColor: Color = PurpleSurface) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = containerColor)) {
+fun EventCard(event: Event, containerColor: Color = PurpleSurface, onClick: () -> Unit = {}) {
+    Card(Modifier.fillMaxWidth().clickable(onClick = onClick), colors = CardDefaults.cardColors(containerColor = containerColor)) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(48.dp).clip(CircleShape).background(PurpleDeep), contentAlignment = Alignment.Center) {
-                Icon(Icons.Outlined.DirectionsRun, null, tint = Lime)
+                if (event.coverPhotoUrl != null) {
+                    AsyncImage(
+                        model = event.coverPhotoUrl,
+                        contentDescription = "Capa do evento",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Icon(Icons.Outlined.DirectionsRun, null, tint = Lime)
+                }
             }
             Column(Modifier.padding(start = 12.dp).weight(1f)) {
                 Text(event.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)

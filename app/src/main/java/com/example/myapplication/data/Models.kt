@@ -16,7 +16,14 @@ data class Student(
     @SerialName("billingDay") val billingDay: Int = 5,
     @SerialName("monthlyFee") val monthlyFee: String = "",
     val accessCode: String = "",
-    val accessCodeExpiresAt: String = ""
+    val accessCodeExpiresAt: String = "",
+    val workoutsCompleted: Int = 0,
+    val workoutsTotal: Int = 0,
+    val performanceDeltaPercent: Int? = null,
+    val paymentStatus: String = "paid",
+    val daysOverdue: Int = 0,
+    val paymentProofUrl: String? = null,
+    val paymentProofRejectionReason: String? = null
 )
 
 @Serializable
@@ -42,50 +49,39 @@ data class Event(
     val name: String,
     val description: String? = null,
     @SerialName("event_date") val eventDate: String,
-    val location: String? = null
-)
-
-@Serializable
-enum class CommunityPostType {
-    POST,
-    POLL,
-    CHALLENGE
-}
-
-@Serializable
-data class CommunityPost(
-    val id: String,
-    val type: CommunityPostType,
-    val title: String = "",
-    val content: String,
-    val target: String = "groups",
-    @SerialName("authorName") val authorName: String = "Usuario",
-    @SerialName("authorAvatarUrl") val authorAvatarUrl: String = "",
-    @SerialName("linkedWorkoutId") val linkedWorkoutId: String? = null,
-    @SerialName("pollOptions") val pollOptions: List<String> = emptyList(),
-    @SerialName("commentThreads") val commentThreads: List<CommunityComment> = emptyList(),
-    @SerialName("mediaLabel") val mediaLabel: String? = null,
-    @SerialName("gifLabel") val gifLabel: String? = null,
-    @SerialName("generatedImagePrompt") val generatedImagePrompt: String? = null,
-    @SerialName("scheduledAt") val scheduledAt: String? = null,
     val location: String? = null,
-    @SerialName("contentWarning") val contentWarning: String? = null,
-    val liked: Boolean = false,
-    val likes: Int = 0,
-    val comments: Int = 0,
-    val shares: Int = 0
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val groupStatus: String = "waiting",
+    val checkedIn: Boolean = false,
+    val attendees: List<EventAttendee> = emptyList(),
+    val results: List<EventRunResult> = emptyList(),
+    val coverPhotoUrl: String? = null
 )
 
 @Serializable
-data class CommunityComment(
-    val id: String,
-    @SerialName("authorName") val authorName: String,
-    @SerialName("authorAvatarUrl") val authorAvatarUrl: String = "",
-    val content: String,
-    val liked: Boolean = false,
-    val likes: Int = 0,
-    val replies: List<CommunityComment> = emptyList()
+data class EventAttendee(
+    val studentId: String,
+    val name: String,
+    val avatarUrl: String = ""
 )
+
+@Serializable
+data class EventRunResult(
+    val studentId: String,
+    val name: String,
+    val elapsedMs: Long,
+    val distanceMeters: Double,
+    val paceSecondsPerKm: Double,
+    val routePoints: List<WorkoutRoutePoint> = emptyList()
+)
+
+@Serializable
+enum class SyncStatus {
+    SYNCED,
+    PENDING,
+    FAILED
+}
 
 @Serializable
 data class TrainingNowUser(
@@ -105,14 +101,41 @@ data class DirectoryItem(
 )
 
 @Serializable
+data class RunHistoryEntry(
+    val id: String,
+    val routineName: String = "",
+    val elapsedMs: Long = 0,
+    val distanceMeters: Double = 0.0,
+    val paceSecondsPerKm: Double = 0.0,
+    val routePoints: List<WorkoutRoutePoint> = emptyList(),
+    val completedAt: String? = null
+)
+
+@Serializable
+data class Challenge(
+    val id: String,
+    val name: String,
+    val description: String = "",
+    val targetType: String = "distance",
+    val targetValue: Double = 0.0,
+    val completions: Int = 0,
+    val totalDistanceMeters: Double = 0.0,
+    val totalElapsedMs: Long = 0,
+    val myCompleted: Boolean = false
+)
+
+@Serializable
 data class DashboardData(
     val students: List<Student>,
     val workouts: List<Workout>,
     val announcements: List<Announcement>,
     val events: List<Event>,
-    val groups: List<DirectoryItem> = emptyList(),
     val routines: List<DirectoryItem> = emptyList(),
-    val communityPosts: List<CommunityPost> = emptyList(),
     val trainingNow: List<TrainingNowUser> = emptyList(),
+    val instructorPixKey: String = "",
+    val instructorName: String = "",
+    val instructorAvatarUrl: String = "",
+    val runHistory: List<RunHistoryEntry> = emptyList(),
+    val challenges: List<Challenge> = emptyList(),
     val message: String? = null
 )

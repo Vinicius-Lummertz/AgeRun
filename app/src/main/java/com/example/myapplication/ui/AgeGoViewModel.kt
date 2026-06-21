@@ -8,11 +8,11 @@ import com.example.myapplication.data.AgeGoRepository
 import com.example.myapplication.data.Announcement
 import com.example.myapplication.data.AuthRequiredException
 import com.example.myapplication.data.AuthSession
-import com.example.myapplication.data.CommunityPost
-import com.example.myapplication.data.CommunityComment
+import com.example.myapplication.data.Challenge
 import com.example.myapplication.data.DirectoryItem
 import com.example.myapplication.data.InstructorSettings
 import com.example.myapplication.data.RepositoryProvider
+import com.example.myapplication.data.RunHistoryEntry
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.TrainingNowUser
 import com.example.myapplication.data.Workout
@@ -33,11 +33,13 @@ data class AgeGoUiState(
     val students: List<Student> = emptyList(),
     val workouts: List<Workout> = emptyList(),
     val announcements: List<Announcement> = emptyList(),
-    val communityPosts: List<CommunityPost> = emptyList(),
     val events: List<Event> = emptyList(),
-    val groups: List<DirectoryItem> = emptyList(),
     val routines: List<DirectoryItem> = emptyList(),
     val trainingNow: List<TrainingNowUser> = emptyList(),
+    val runHistory: List<RunHistoryEntry> = emptyList(),
+    val challenges: List<Challenge> = emptyList(),
+    val instructorName: String = "",
+    val instructorAvatarUrl: String = "",
     val message: String? = null
 )
 
@@ -133,13 +135,14 @@ class AgeGoViewModel(
         email: String,
         nickname: String,
         photoUri: Uri?,
+        frequencyDays: List<Int>,
         token: String,
         context: Context,
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
             _uiState.update { it.copy(authLoading = true, authMessage = null) }
-            runCatching { repository.completeStudentFirstAccess(context.contentResolver, phone, email, nickname, photoUri, token) }
+            runCatching { repository.completeStudentFirstAccess(context.contentResolver, phone, email, nickname, photoUri, frequencyDays, token) }
                 .onSuccess { session ->
                     _uiState.value = emptyDataState(session).copy(isLoading = true, authLoading = false, authMessage = null)
                     refresh()
@@ -147,6 +150,10 @@ class AgeGoViewModel(
                 }
                 .onFailure { error -> _uiState.update { it.copy(authLoading = false, authMessage = error.message ?: "Primeiro acesso nao concluido") } }
         }
+    }
+
+    fun clearMessage() {
+        _uiState.update { it.copy(message = null) }
     }
 
     fun logout() {
@@ -167,18 +174,20 @@ class AgeGoViewModel(
                 val settings = if (_uiState.value.authSession?.role == "instructor") {
                     runCatching { repository.loadSettings() }.getOrElse { _uiState.value.instructorSettings }
                 } else {
-                    _uiState.value.instructorSettings
+                    _uiState.value.instructorSettings.copy(pixKey = data.instructorPixKey)
                 }
                 _uiState.update { current -> current.copy(
                     isLoading = false,
                     students = data.students,
                     workouts = data.workouts,
                     announcements = data.announcements,
-                    communityPosts = data.communityPosts,
                     events = data.events,
-                    groups = data.groups,
                     routines = data.routines,
                     trainingNow = data.trainingNow,
+                    runHistory = data.runHistory,
+                    challenges = data.challenges,
+                    instructorName = data.instructorName,
+                    instructorAvatarUrl = data.instructorAvatarUrl,
                     message = data.message,
                     instructorSettings = settings
                 ) }
@@ -198,9 +207,7 @@ class AgeGoViewModel(
                         students = emptyList(),
                         workouts = emptyList(),
                         announcements = emptyList(),
-                        communityPosts = emptyList(),
                         events = emptyList(),
-                        groups = emptyList(),
                         routines = emptyList(),
                         trainingNow = emptyList(),
                         message = error.message ?: "Nao foi possivel carregar dados"
@@ -255,188 +262,114 @@ class AgeGoViewModel(
 
     fun deleteStudent(studentId: String) {
         viewModelScope.launch {
-            repository.deleteStudent(studentId)
-            _uiState.update { state -> state.copy(students = state.students.filterNot { it.id == studentId }) }
+            runCatching { repository.deleteStudent(studentId) }
+                .onSuccess { _uiState.update { state -> state.copy(students = state.students.filterNot { it.id == studentId }) } }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível excluir aluno") } }
         }
     }
 
-    fun saveWorkout(workout: Workout) {
+    fun saveWorkout(workout: Workout, onSaved: (Workout) -> Unit = {}) {
         viewModelScope.launch {
-            val normalized = repository.saveWorkout(workout)
-            _uiState.update { state ->
-                val exists = state.workouts.any { it.id == normalized.id }
-                state.copy(workouts = if (exists) state.workouts.map { if (it.id == normalized.id) normalized else it } else listOf(normalized) + state.workouts)
-            }
+            runCatching { repository.saveWorkout(workout) }
+                .onSuccess { normalized ->
+                    _uiState.update { state ->
+                        val exists = state.workouts.any { it.id == normalized.id }
+                        state.copy(workouts = if (exists) state.workouts.map { if (it.id == normalized.id) normalized else it } else listOf(normalized) + state.workouts)
+                    }
+                    onSaved(normalized)
+                }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar treino") } }
         }
     }
 
     fun deleteWorkout(workoutId: String) {
         viewModelScope.launch {
-            repository.deleteWorkout(workoutId)
-            _uiState.update { state -> state.copy(workouts = state.workouts.filterNot { it.id == workoutId }) }
+            runCatching { repository.deleteWorkout(workoutId) }
+                .onSuccess { _uiState.update { state -> state.copy(workouts = state.workouts.filterNot { it.id == workoutId }) } }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível excluir treino") } }
         }
     }
 
     fun saveEvent(event: Event) {
         viewModelScope.launch {
-            val normalized = repository.saveEvent(event)
-            _uiState.update { state ->
-                val exists = state.events.any { it.id == normalized.id }
-                state.copy(events = if (exists) state.events.map { if (it.id == normalized.id) normalized else it } else listOf(normalized) + state.events)
-            }
+            runCatching { repository.saveEvent(event) }
+                .onSuccess { normalized ->
+                    _uiState.update { state ->
+                        val exists = state.events.any { it.id == normalized.id }
+                        state.copy(events = if (exists) state.events.map { if (it.id == normalized.id) normalized else it } else listOf(normalized) + state.events)
+                    }
+                }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível salvar evento") } }
         }
     }
 
     fun deleteEvent(eventId: String) {
         viewModelScope.launch {
-            repository.deleteEvent(eventId)
-            _uiState.update { state -> state.copy(events = state.events.filterNot { it.id == eventId }) }
+            runCatching { repository.deleteEvent(eventId) }
+                .onSuccess { _uiState.update { state -> state.copy(events = state.events.filterNot { it.id == eventId }) } }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível excluir evento") } }
         }
     }
 
-    fun saveGroup(group: DirectoryItem) {
+    fun saveRoutine(routine: DirectoryItem, onSaved: (DirectoryItem) -> Unit = {}) {
         viewModelScope.launch {
-            val saved = repository.saveGroup(group)
-            _uiState.update { state ->
-                val exists = state.groups.any { it.id == saved.id }
-                state.copy(groups = if (exists) state.groups.map { if (it.id == saved.id) saved else it } else listOf(saved) + state.groups)
-            }
+            runCatching { repository.saveRoutine(routine) }
+                .onSuccess { saved ->
+                    _uiState.update { state ->
+                        val exists = state.routines.any { it.id == saved.id }
+                        state.copy(routines = if (exists) state.routines.map { if (it.id == saved.id) saved else it } else listOf(saved) + state.routines)
+                    }
+                    onSaved(saved)
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar treino") }
+                }
         }
     }
 
-    fun deleteGroup(groupId: String) {
+    fun saveAnnouncement(content: String, targetType: String) {
         viewModelScope.launch {
-            repository.deleteGroup(groupId)
-            _uiState.update { state -> state.copy(groups = state.groups.filterNot { it.id == groupId }) }
+            runCatching { repository.saveAnnouncement(content, targetType) }
+                .onSuccess { saved -> _uiState.update { state -> state.copy(announcements = listOf(saved) + state.announcements) } }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível publicar o aviso") } }
         }
     }
 
-    fun saveRoutine(routine: DirectoryItem) {
-        viewModelScope.launch {
-            val saved = repository.saveRoutine(routine)
-            _uiState.update { state ->
-                val exists = state.routines.any { it.id == saved.id }
-                state.copy(routines = if (exists) state.routines.map { if (it.id == saved.id) saved else it } else listOf(saved) + state.routines)
-            }
-        }
+    fun checkInEvent(eventId: String) = viewModelScope.launch {
+        runCatching { repository.checkInEvent(eventId) }
+            .onSuccess { refresh() }
+            .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível confirmar presença") } }
+    }
+
+    fun openEventCheckIn(eventId: String) = viewModelScope.launch {
+        runCatching { repository.openEventCheckIn(eventId) }
+            .onSuccess { refresh() }
+            .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível iniciar o evento") } }
+    }
+
+    fun startGroupEvent(eventId: String) = viewModelScope.launch {
+        runCatching { repository.startGroupEvent(eventId) }
+            .onSuccess { refresh() }
+            .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível iniciar a corrida") } }
+    }
+
+    fun finishGroupEvent(eventId: String) = viewModelScope.launch {
+        runCatching { repository.finishGroupEvent(eventId) }
+            .onSuccess { refresh() }
+            .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível finalizar o evento") } }
+    }
+
+    fun saveEventRunResult(eventId: String, session: WorkoutSessionPayload, onSaved: () -> Unit = {}) = viewModelScope.launch {
+        runCatching { repository.saveEventRunResult(eventId, session) }
+            .onSuccess { onSaved(); refresh() }
+            .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível enviar o resultado") } }
     }
 
     fun deleteRoutine(routineId: String) {
         viewModelScope.launch {
-            repository.deleteRoutine(routineId)
-            _uiState.update { state -> state.copy(routines = state.routines.filterNot { it.id == routineId }) }
-        }
-    }
-
-    fun saveCommunityPost(post: CommunityPost) {
-        val tempId = "local-${java.util.UUID.randomUUID()}"
-        val session = _uiState.value.authSession
-        val localPost = post.copy(
-            id = tempId,
-            authorName = session?.name?.ifBlank { "Voce" } ?: "Voce",
-            authorAvatarUrl = session?.avatarUrl.orEmpty()
-        )
-        _uiState.update { state -> state.copy(communityPosts = listOf(localPost) + state.communityPosts) }
-        viewModelScope.launch {
-            val normalized = repository.saveCommunityPost(post)
-            _uiState.update { state ->
-                state.copy(
-                    communityPosts = state.communityPosts.map { if (it.id == tempId) normalized else it }
-                )
-            }
-        }
-    }
-
-    fun toggleCommunityLike(postId: String) {
-        viewModelScope.launch { repository.toggleCommunityLike(postId) }
-        _uiState.update { state ->
-            state.copy(
-                communityPosts = state.communityPosts.map { post ->
-                    if (post.id != postId) {
-                        post
-                    } else {
-                        post.copy(
-                            liked = !post.liked,
-                            likes = (post.likes + if (post.liked) -1 else 1).coerceAtLeast(0)
-                        )
-                    }
-                }
-            )
-        }
-    }
-
-    fun addCommunityComment(postId: String, content: String = "Novo comentario") {
-        viewModelScope.launch { repository.addCommunityComment(postId, content) }
-        _uiState.update { state ->
-            state.copy(
-                communityPosts = state.communityPosts.map { post ->
-                    if (post.id == postId) {
-                        post.copy(
-                            comments = post.comments + 1,
-                            commentThreads = post.commentThreads + CommunityComment(
-                                id = java.util.UUID.randomUUID().toString(),
-                                authorName = state.authSession?.name?.ifBlank { "Voce" } ?: "Voce",
-                                authorAvatarUrl = state.authSession?.avatarUrl.orEmpty(),
-                                content = content
-                            )
-                        )
-                    } else {
-                        post
-                    }
-                }
-            )
-        }
-    }
-
-    fun replyCommunityComment(postId: String, commentId: String, content: String) {
-        viewModelScope.launch { repository.addCommunityComment(postId, content, commentId) }
-        _uiState.update { state ->
-            state.copy(
-                communityPosts = state.communityPosts.map { post ->
-                    if (post.id == postId) {
-                        post.copy(
-                            comments = post.comments + 1,
-                            commentThreads = post.commentThreads.addReplyToComment(
-                                commentId,
-                                CommunityComment(
-                                    id = java.util.UUID.randomUUID().toString(),
-                                    authorName = state.authSession?.name?.ifBlank { "Voce" } ?: "Voce",
-                                    authorAvatarUrl = state.authSession?.avatarUrl.orEmpty(),
-                                    content = content
-                                )
-                            )
-                        )
-                    } else {
-                        post
-                    }
-                }
-            )
-        }
-    }
-
-    fun toggleCommunityCommentLike(postId: String, commentId: String) {
-        viewModelScope.launch { repository.toggleCommunityCommentLike(commentId) }
-        _uiState.update { state ->
-            state.copy(
-                communityPosts = state.communityPosts.map { post ->
-                    if (post.id == postId) {
-                        post.copy(commentThreads = post.commentThreads.toggleCommentLike(commentId))
-                    } else {
-                        post
-                    }
-                }
-            )
-        }
-    }
-
-    fun shareCommunityPost(postId: String) {
-        viewModelScope.launch { repository.shareCommunityPost(postId) }
-        _uiState.update { state ->
-            state.copy(
-                communityPosts = state.communityPosts.map {
-                    if (it.id == postId) it.copy(shares = it.shares + 1) else it
-                }
-            )
+            runCatching { repository.deleteRoutine(routineId) }
+                .onSuccess { _uiState.update { state -> state.copy(routines = state.routines.filterNot { it.id == routineId }) } }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível excluir treino") } }
         }
     }
 
@@ -454,6 +387,46 @@ class AgeGoViewModel(
                 .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar treino") } }
         }
     }
+
+    fun submitPaymentProof(url: String) {
+        viewModelScope.launch {
+            runCatching { repository.submitPaymentProof(url) }
+                .onSuccess { _uiState.update { it.copy(message = "Comprovante enviado para aprovação") }; refresh() }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível enviar o comprovante") } }
+        }
+    }
+
+    fun approvePayment(studentId: String) {
+        viewModelScope.launch {
+            runCatching { repository.approvePayment(studentId) }
+                .onSuccess { refresh() }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível aprovar o pagamento") } }
+        }
+    }
+
+    fun rejectPayment(studentId: String, reason: String) {
+        viewModelScope.launch {
+            runCatching { repository.rejectPayment(studentId, reason) }
+                .onSuccess { refresh() }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível rejeitar o comprovante") } }
+        }
+    }
+
+    fun saveChallenge(challengeId: String, name: String, description: String, targetType: String, targetValue: Double) {
+        viewModelScope.launch {
+            runCatching { repository.saveChallenge(challengeId, name, description, targetType, targetValue) }
+                .onSuccess { challenges -> _uiState.update { it.copy(challenges = challenges, message = if (challengeId.isBlank()) "Desafio criado" else "Desafio atualizado") } }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível salvar o desafio") } }
+        }
+    }
+
+    fun deleteChallenge(challengeId: String) {
+        viewModelScope.launch {
+            runCatching { repository.deleteChallenge(challengeId) }
+                .onSuccess { _uiState.update { state -> state.copy(challenges = state.challenges.filterNot { it.id == challengeId }) } }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível excluir o desafio") } }
+        }
+    }
 }
 
 private fun emptyDataState(session: AuthSession) = AgeGoUiState(
@@ -462,31 +435,7 @@ private fun emptyDataState(session: AuthSession) = AgeGoUiState(
     students = emptyList(),
     workouts = emptyList(),
     announcements = emptyList(),
-    communityPosts = emptyList(),
     events = emptyList(),
-    groups = emptyList(),
     routines = emptyList(),
     trainingNow = emptyList()
 )
-
-private fun List<CommunityComment>.addReplyToComment(
-    commentId: String,
-    reply: CommunityComment
-): List<CommunityComment> = map { comment ->
-    when {
-        comment.id == commentId -> comment.copy(replies = comment.replies + reply)
-        comment.replies.isNotEmpty() -> comment.copy(replies = comment.replies.addReplyToComment(commentId, reply))
-        else -> comment
-    }
-}
-
-private fun List<CommunityComment>.toggleCommentLike(commentId: String): List<CommunityComment> = map { comment ->
-    when {
-        comment.id == commentId -> comment.copy(
-            liked = !comment.liked,
-            likes = (comment.likes + if (comment.liked) -1 else 1).coerceAtLeast(0)
-        )
-        comment.replies.isNotEmpty() -> comment.copy(replies = comment.replies.toggleCommentLike(commentId))
-        else -> comment
-    }
-}

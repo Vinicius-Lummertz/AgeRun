@@ -71,7 +71,6 @@ import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.GifBox
-import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.InsertEmoticon
@@ -144,8 +143,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.myapplication.data.Announcement
-import com.example.myapplication.data.CommunityPost
-import com.example.myapplication.data.CommunityPostType
+import com.example.myapplication.data.Challenge
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.Workout
 import com.example.myapplication.data.Event
@@ -182,11 +180,275 @@ fun FinancialCard(label: String, value: String, color: Color, modifier: Modifier
 }
 
 @Composable
-fun AnnouncementsScreen(announcements: List<Announcement>, loading: Boolean, onBack: () -> Unit) {
-    ListScaffold("Avisos", "Criar aviso", onBack) {
+fun AnnouncementsScreen(announcements: List<Announcement>, loading: Boolean, onBack: () -> Unit, onCreate: () -> Unit = {}) {
+    ListScaffold("Avisos", "Criar aviso", onBack, onAction = onCreate) {
         Text("Comunicados recentes", fontWeight = FontWeight.Bold, fontSize = 18.sp)
         if (loading) LoadingBox()
+        if (announcements.isEmpty() && !loading) {
+            Text("Nenhum aviso publicado ainda.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         announcements.forEach { AnnouncementCard(it) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AnnouncementFormScreen(onBack: () -> Unit, onSave: (String, String) -> Unit) {
+    var content by remember { mutableStateOf("") }
+    var targetType by remember { mutableStateOf("all") }
+    Scaffold(
+        containerColor = PurpleBackground,
+        topBar = {
+            TopAppBar(
+                title = { Text("Novo aviso", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = PurpleBackground)
+            )
+        }
+    ) { padding ->
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(
+                    onClick = { targetType = "all" },
+                    label = { Text("Todos") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (targetType == "all") Lime else PurpleSurface,
+                        labelColor = if (targetType == "all") PurpleDeep else Color.White
+                    )
+                )
+                AssistChip(
+                    onClick = { targetType = "group" },
+                    label = { Text("Turma") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (targetType == "group") Lime else PurpleSurface,
+                        labelColor = if (targetType == "group") PurpleDeep else Color.White
+                    )
+                )
+            }
+            TextField(
+                value = content,
+                onValueChange = { content = it },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp),
+                placeholder = { Text("Escreva o aviso para seus alunos...") },
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = PurpleSurface,
+                    unfocusedContainerColor = PurpleSurface
+                )
+            )
+            Button(
+                onClick = { if (content.isNotBlank()) onSave(content.trim(), targetType) },
+                enabled = content.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Publicar aviso")
+            }
+        }
+    }
+}
+
+fun challengeTargetLabel(challenge: Challenge): String = if (challenge.targetType == "distance") "Distância" else "Tempo"
+
+@Composable
+fun ChallengesScreen(
+    challenges: List<Challenge>,
+    loading: Boolean,
+    onBack: () -> Unit,
+    onCreate: () -> Unit = {},
+    onChallengeClick: (Challenge) -> Unit = {}
+) {
+    var filter by remember { mutableStateOf("Todos") }
+    DirectoryScreen(
+        title = "Hub Fit - Desafios",
+        searchPlaceholder = "Pesquisar desafio",
+        filters = listOf("Todos", "Distância", "Tempo"),
+        selectedFilter = filter,
+        onFilterSelected = { filter = it },
+        actions = listOf(DirectoryAction("Novo desafio", R.drawable.ic_workouts, onCreate)),
+        items = challenges,
+        loading = loading,
+        itemId = { it.id },
+        itemTitle = { it.name },
+        itemStatus = { challengeTargetLabel(it) },
+        itemMatchesQuery = { challenge, query -> challenge.name.contains(query, true) },
+        onBack = onBack,
+        onItemClick = onChallengeClick
+    )
+}
+
+@Composable
+fun ChallengeDetailScreen(
+    challenge: Challenge?,
+    onBack: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: (String) -> Unit
+) {
+    Column(Modifier.fillMaxSize().background(PurpleBackground)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 28.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+            }
+            Text(
+                challenge?.name ?: "Desafio",
+                modifier = Modifier.padding(start = 4.dp).weight(1f),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Normal,
+                color = Color.White
+            )
+            if (challenge != null) {
+                TextButton(onClick = onEdit) { Text("Editar", color = Lime, fontWeight = FontWeight.Bold) }
+            }
+        }
+        if (challenge == null) {
+            Text("Desafio nao encontrado.", color = Color.White.copy(alpha = .6f), modifier = Modifier.padding(16.dp))
+            return@Column
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Surface(Modifier.fillMaxWidth(), color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        WorkoutDetailRow("Meta", if (challenge.targetType == "distance") "${challenge.targetValue} km" else "${challenge.targetValue} min")
+                        WorkoutDetailRow("Tipo", challengeTargetLabel(challenge))
+                        if (challenge.description.isNotBlank()) {
+                            WorkoutDetailRow("Descrição", challenge.description)
+                        }
+                    }
+                }
+            }
+            item {
+                Surface(Modifier.fillMaxWidth(), color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Desempenho", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(
+                            "${challenge.completions} concluíram · ${"%.1f".format(challenge.totalDistanceMeters / 1000.0)} km no total",
+                            fontSize = 13.sp,
+                            color = Color.White.copy(alpha = .7f)
+                        )
+                    }
+                }
+            }
+            item {
+                TextButton(
+                    onClick = { onDelete(challenge.id) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Excluir desafio", color = Color(0xFFFFB3BE), fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ChallengeFormScreen(
+    challenge: Challenge? = null,
+    onBack: () -> Unit,
+    onSave: (String, String, String, String, Double) -> Unit
+) {
+    var name by remember(challenge?.id) { mutableStateOf(challenge?.name.orEmpty()) }
+    var description by remember(challenge?.id) { mutableStateOf(challenge?.description.orEmpty()) }
+    var targetType by remember(challenge?.id) { mutableStateOf(challenge?.targetType ?: "distance") }
+    var targetValue by remember(challenge?.id) { mutableStateOf(challenge?.targetValue?.takeIf { it > 0 }?.toString().orEmpty()) }
+    Scaffold(
+        containerColor = PurpleBackground,
+        topBar = {
+            TopAppBar(
+                title = { Text(if (challenge == null) "Novo desafio" else "Editar desafio", fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = PurpleBackground)
+            )
+        }
+    ) { padding ->
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            TextField(
+                value = name,
+                onValueChange = { name = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Nome do desafio") },
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = PurpleSurface,
+                    unfocusedContainerColor = PurpleSurface
+                )
+            )
+            TextField(
+                value = description,
+                onValueChange = { description = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("Descrição (opcional)") },
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = PurpleSurface,
+                    unfocusedContainerColor = PurpleSurface
+                )
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(
+                    onClick = { targetType = "distance" },
+                    label = { Text("Distância") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (targetType == "distance") Lime else PurpleSurface,
+                        labelColor = if (targetType == "distance") PurpleDeep else Color.White
+                    )
+                )
+                AssistChip(
+                    onClick = { targetType = "time" },
+                    label = { Text("Tempo") },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (targetType == "time") Lime else PurpleSurface,
+                        labelColor = if (targetType == "time") PurpleDeep else Color.White
+                    )
+                )
+            }
+            TextField(
+                value = targetValue,
+                onValueChange = { targetValue = it.filter { ch -> ch.isDigit() || ch == '.' } },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(if (targetType == "distance") "Meta em km" else "Meta em minutos") },
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = PurpleSurface,
+                    unfocusedContainerColor = PurpleSurface
+                )
+            )
+            Text(
+                "Desafios são treinos de um único dia que o aluno pode fazer quando quiser.",
+                color = Color.White.copy(alpha = .58f),
+                fontSize = 12.sp
+            )
+            Button(
+                onClick = {
+                    val value = targetValue.toDoubleOrNull() ?: 0.0
+                    if (name.isNotBlank()) onSave(challenge?.id.orEmpty(), name.trim(), description.trim(), targetType, value)
+                },
+                enabled = name.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (challenge == null) "Criar desafio" else "Salvar desafio")
+            }
+        }
     }
 }
 
@@ -213,6 +475,7 @@ fun ListScaffold(
     title: String,
     actionLabel: String,
     onBack: () -> Unit,
+    onAction: () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit
 ) {
     Scaffold(
@@ -229,7 +492,7 @@ fun ListScaffold(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = {}, containerColor = Lime, contentColor = PurpleDeep) {
+            FloatingActionButton(onClick = onAction, containerColor = Lime, contentColor = PurpleDeep) {
                 Icon(Icons.Outlined.Add, actionLabel)
             }
         }

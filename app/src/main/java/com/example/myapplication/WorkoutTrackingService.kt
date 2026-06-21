@@ -15,6 +15,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.media.AudioManager
+import android.media.ToneGenerator
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.myapplication.data.WorkoutRoutePoint
@@ -29,12 +31,21 @@ class WorkoutTrackingService : Service(), LocationListener {
     private var lastLocation: Location? = null
     private val routePoints = mutableListOf<WorkoutRoutePoint>()
     private var running = false
+    private var goalType = ""
+    private var goalValue = 0.0
+    private var goalLabel = ""
+    private var goalBaseElapsedMs = 0L
+    private var goalBaseDistanceMeters = 0.0
+    private var goalAlerted = false
 
     private val ticker = object : Runnable {
         override fun run() {
             persist()
             broadcast()
-            updateNotification()
+            checkGoal()
+            // Enquanto pausado, a notificação fica congelada (não vira "Treino pausado"); o
+            // estado de pausa é sinalizado só dentro do app.
+            if (running) updateNotification()
             handler.postDelayed(this, 1000)
         }
     }
@@ -52,6 +63,7 @@ class WorkoutTrackingService : Service(), LocationListener {
             ACTION_RESUME -> startTracking(reset = false)
             ACTION_PAUSE -> pauseTracking()
             ACTION_STOP -> stopTracking()
+            ACTION_SET_GOAL -> configureGoal(intent)
             else -> {
                 startForeground(NOTIFICATION_ID, notification())
                 handler.removeCallbacks(ticker)
@@ -82,6 +94,7 @@ class WorkoutTrackingService : Service(), LocationListener {
         routePoints += WorkoutRoutePoint(location.latitude, location.longitude, location.time.takeIf { it > 0L } ?: System.currentTimeMillis())
         persist()
         broadcast()
+        checkGoal()
     }
 
     private fun startTracking(reset: Boolean) {
@@ -90,11 +103,13 @@ class WorkoutTrackingService : Service(), LocationListener {
             distanceMeters = 0.0
             lastLocation = null
             routePoints.clear()
+            goalAlerted = false
         }
         running = true
         startedAtMs = System.currentTimeMillis()
         startForeground(NOTIFICATION_ID, notification())
         requestLocationUpdates()
+        persist()
         handler.removeCallbacks(ticker)
         handler.post(ticker)
     }
@@ -105,7 +120,8 @@ class WorkoutTrackingService : Service(), LocationListener {
         runCatching { locationManager.removeUpdates(this) }
         persist()
         broadcast()
-        updateNotification()
+        // O pausado é sinalizado só dentro do app (botão play/pause); a notificação do sistema
+        // não é atualizada aqui para não soar como um novo alerta.
     }
 
     private fun stopTracking() {
@@ -141,6 +157,46 @@ class WorkoutTrackingService : Service(), LocationListener {
         return elapsedMs() / 1000.0 / km
     }
 
+    private fun configureGoal(intent: Intent) {
+        startForeground(NOTIFICATION_ID, notification())
+        goalType = intent.getStringExtra(EXTRA_GOAL_TYPE).orEmpty()
+        goalValue = intent.getDoubleExtra(EXTRA_GOAL_VALUE, 0.0)
+        goalLabel = intent.getStringExtra(EXTRA_GOAL_LABEL).orEmpty()
+        goalBaseElapsedMs = intent.getLongExtra(EXTRA_GOAL_BASE_ELAPSED_MS, elapsedMs())
+        goalBaseDistanceMeters = intent.getDoubleExtra(EXTRA_GOAL_BASE_DISTANCE_M, distanceMeters)
+        goalAlerted = false
+        persist()
+        checkGoal()
+    }
+
+    private fun checkGoal() {
+        if (!running || goalAlerted || goalValue <= 0.0) return
+        val reached = when (goalType) {
+            "time", "rest" -> (elapsedMs() - goalBaseElapsedMs) >= (goalValue * 60_000.0)
+            "distance" -> (distanceMeters - goalBaseDistanceMeters) >= (goalValue * 1000.0)
+            else -> false
+        }
+        if (!reached) return
+        goalAlerted = true
+        persist()
+        ToneGenerator(AudioManager.STREAM_NOTIFICATION, 100).apply {
+            startTone(ToneGenerator.TONE_PROP_BEEP2, 900)
+            handler.postDelayed({ release() }, 1200)
+        }
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.notify(
+            GOAL_NOTIFICATION_ID,
+            NotificationCompat.Builder(this, GOAL_CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_nav_hub_fit)
+                .setContentTitle("Desafio concluído")
+                .setContentText(goalLabel.ifBlank { "Você alcançou o objetivo desta etapa." })
+                .setStyle(NotificationCompat.BigTextStyle().bigText("Objetivo alcançado: ${goalLabel.ifBlank { "etapa do treino" }}. Abra o app e toque em seguir para o próximo treino."))
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .build()
+        )
+    }
+
     private fun broadcast() {
         sendBroadcast(Intent(ACTION_UPDATE).apply {
             setPackage(packageName)
@@ -148,16 +204,24 @@ class WorkoutTrackingService : Service(), LocationListener {
             putExtra(EXTRA_ELAPSED_MS, elapsedMs())
             putExtra(EXTRA_DISTANCE_M, distanceMeters)
             putExtra(EXTRA_PACE_SEC_KM, paceSecondsPerKm())
+            putExtra(EXTRA_ROUTE_POINTS, routePoints.joinToString(";") { "${it.lat},${it.lon},${it.timestamp}" })
         })
     }
 
     private fun persist() {
         prefs().edit()
+            .putLong(EXTRA_LAST_PERSIST_AT, System.currentTimeMillis())
             .putBoolean(EXTRA_RUNNING, running)
             .putLong(EXTRA_ELAPSED_MS, elapsedMs())
             .putLong("startedAtMs", startedAtMs)
             .putFloat(EXTRA_DISTANCE_M, distanceMeters.toFloat())
             .putString(EXTRA_ROUTE_POINTS, routePoints.joinToString(";") { "${it.lat},${it.lon},${it.timestamp}" })
+            .putString(EXTRA_GOAL_TYPE, goalType)
+            .putFloat(EXTRA_GOAL_VALUE, goalValue.toFloat())
+            .putString(EXTRA_GOAL_LABEL, goalLabel)
+            .putLong(EXTRA_GOAL_BASE_ELAPSED_MS, goalBaseElapsedMs)
+            .putFloat(EXTRA_GOAL_BASE_DISTANCE_M, goalBaseDistanceMeters.toFloat())
+            .putBoolean("goalAlerted", goalAlerted)
             .apply()
     }
 
@@ -169,6 +233,12 @@ class WorkoutTrackingService : Service(), LocationListener {
         distanceMeters = prefs.getFloat(EXTRA_DISTANCE_M, 0f).toDouble()
         routePoints.clear()
         routePoints += parseRoutePoints(prefs.getString(EXTRA_ROUTE_POINTS, "").orEmpty())
+        goalType = prefs.getString(EXTRA_GOAL_TYPE, "").orEmpty()
+        goalValue = prefs.getFloat(EXTRA_GOAL_VALUE, 0f).toDouble()
+        goalLabel = prefs.getString(EXTRA_GOAL_LABEL, "").orEmpty()
+        goalBaseElapsedMs = prefs.getLong(EXTRA_GOAL_BASE_ELAPSED_MS, 0L)
+        goalBaseDistanceMeters = prefs.getFloat(EXTRA_GOAL_BASE_DISTANCE_M, 0f).toDouble()
+        goalAlerted = prefs.getBoolean("goalAlerted", false)
         if (running) {
             baseElapsedMs = elapsedMs()
             startedAtMs = System.currentTimeMillis()
@@ -182,6 +252,12 @@ class WorkoutTrackingService : Service(), LocationListener {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, "Treino em andamento", NotificationManager.IMPORTANCE_LOW)
+            )
+            manager.createNotificationChannel(
+                NotificationChannel(GOAL_CHANNEL_ID, "Desafios do treino", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "Apita e avisa quando uma meta de tempo ou distância é alcançada"
+                    enableVibration(true)
+                }
             )
         }
     }
@@ -207,14 +283,24 @@ class WorkoutTrackingService : Service(), LocationListener {
         const val ACTION_RESUME = "com.example.myapplication.workout.RESUME"
         const val ACTION_PAUSE = "com.example.myapplication.workout.PAUSE"
         const val ACTION_STOP = "com.example.myapplication.workout.STOP"
+        const val ACTION_SET_GOAL = "com.example.myapplication.workout.SET_GOAL"
         const val ACTION_UPDATE = "com.example.myapplication.workout.UPDATE"
         const val EXTRA_RUNNING = "running"
         const val EXTRA_ELAPSED_MS = "elapsedMs"
         const val EXTRA_DISTANCE_M = "distanceMeters"
         const val EXTRA_PACE_SEC_KM = "paceSecondsPerKm"
         const val EXTRA_ROUTE_POINTS = "routePoints"
+        const val EXTRA_GOAL_TYPE = "goalType"
+        const val EXTRA_GOAL_VALUE = "goalValue"
+        const val EXTRA_GOAL_LABEL = "goalLabel"
+        const val EXTRA_GOAL_BASE_ELAPSED_MS = "goalBaseElapsedMs"
+        const val EXTRA_GOAL_BASE_DISTANCE_M = "goalBaseDistanceMeters"
+        const val EXTRA_LAST_PERSIST_AT = "lastPersistAt"
+        const val STALE_SESSION_THRESHOLD_MS = 90_000L
         private const val CHANNEL_ID = "agego_workout_tracking"
+        private const val GOAL_CHANNEL_ID = "agego_workout_goals"
         private const val NOTIFICATION_ID = 7201
+        private const val GOAL_NOTIFICATION_ID = 7202
     }
 }
 
@@ -228,6 +314,13 @@ data class WorkoutTrackingSnapshot(
 
 fun readWorkoutTrackingSnapshot(context: Context): WorkoutTrackingSnapshot {
     val prefs = context.getSharedPreferences("agego_workout_tracking", Context.MODE_PRIVATE)
+    val lastPersistAt = prefs.getLong(WorkoutTrackingService.EXTRA_LAST_PERSIST_AT, 0L)
+    val isFresh = lastPersistAt > 0L &&
+        (System.currentTimeMillis() - lastPersistAt) <= WorkoutTrackingService.STALE_SESSION_THRESHOLD_MS
+    if (!isFresh) {
+        if (lastPersistAt > 0L) prefs.edit().clear().apply()
+        return WorkoutTrackingSnapshot(0L, 0.0, 0.0, emptyList(), emptyList())
+    }
     val elapsedMs = prefs.getLong(WorkoutTrackingService.EXTRA_ELAPSED_MS, 0L)
     val distanceMeters = prefs.getFloat(WorkoutTrackingService.EXTRA_DISTANCE_M, 0f).toDouble()
     val routePoints = parseRoutePoints(prefs.getString(WorkoutTrackingService.EXTRA_ROUTE_POINTS, "").orEmpty())

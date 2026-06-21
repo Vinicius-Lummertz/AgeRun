@@ -79,7 +79,6 @@ import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.GifBox
-import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.InsertEmoticon
@@ -91,6 +90,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Badge
@@ -105,6 +105,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -131,6 +132,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -154,8 +156,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.myapplication.data.Announcement
-import com.example.myapplication.data.CommunityPost
-import com.example.myapplication.data.CommunityPostType
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.Workout
 import com.example.myapplication.data.Event
@@ -207,16 +207,23 @@ fun LegacyWorkoutsScreen(
 }
 
 @Composable
-fun EarningsScreen(students: List<Student>, routines: List<DirectoryEntry>) {
-    val context = LocalContext.current
+fun EarningsScreen(
+    students: List<Student>,
+    routines: List<DirectoryEntry>,
+    onReviewPayment: (Student) -> Unit = {}
+) {
     val billableStudents = students.filter { it.status != "inactive" }
-    val monthlyTotal = billableStudents.sumOf { parseMoneyValue(studentRoutineMonthlyFee(it, routines)) }
-    val today = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH).coerceAtMost(28)
-    val dueToday = billableStudents.filter { it.billingDay == today }
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) showTestNotification(context)
+    val paidStudents = billableStudents.filter { it.paymentStatus == "paid" }
+    val pendingStudents = billableStudents.filter { it.paymentStatus != "paid" }
+    val proofsToReview = billableStudents.filter { !it.paymentProofUrl.isNullOrBlank() }
+    val targetTotal = billableStudents.sumOf { parseMoneyValue(studentRoutineMonthlyFee(it, routines)) }
+    val receivedTotal = paidStudents.sumOf { parseMoneyValue(studentRoutineMonthlyFee(it, routines)) }
+    val progress = if (targetTotal > 0) (receivedTotal / targetTotal).toFloat().coerceIn(0f, 1f) else 0f
+    var filter by remember { mutableStateOf<String?>(null) }
+    val visibleStudents = when (filter) {
+        "em_dia" -> paidStudents
+        "a_receber" -> pendingStudents
+        else -> billableStudents
     }
 
     LazyColumn(
@@ -225,56 +232,84 @@ fun EarningsScreen(students: List<Student>, routines: List<DirectoryEntry>) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            Text("Ganhos", fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("Resumo financeiro da assessoria", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        item {
             Card(colors = CardDefaults.cardColors(containerColor = Lime), shape = RoundedCornerShape(18.dp)) {
-                Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Receita prevista", color = LimeMuted)
-                    Text(formatCurrency(monthlyTotal), color = PurpleDeep, fontSize = 34.sp, fontWeight = FontWeight.Bold)
-                    Text("${billableStudents.size} clientes ativos no ciclo mensal.", color = PurpleDeep.copy(alpha = .75f), fontSize = 13.sp)
+                    Text(
+                        "${formatCurrency(receivedTotal)} / ${formatCurrency(targetTotal)}",
+                        color = PurpleDeep,
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(50)),
+                        color = PurpleDeep,
+                        trackColor = PurpleDeep.copy(alpha = .18f)
+                    )
                 }
             }
         }
-        item {
-            Button(
-                onClick = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-                    ) {
-                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    } else {
-                        showTestNotification(context)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = PurpleSurface, contentColor = Color.White),
-                shape = RoundedCornerShape(50)
-            ) {
-                Icon(Icons.Outlined.Notifications, contentDescription = null, tint = Lime)
-                Text("Testar notificação", Modifier.padding(start = 8.dp), fontWeight = FontWeight.Bold)
+        if (proofsToReview.isNotEmpty()) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Payments, contentDescription = null, tint = Color(0xFFFFD166))
+                    Text(
+                        "Comprovantes para aprovar (${proofsToReview.size})",
+                        Modifier.padding(start = 8.dp),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFD166)
+                    )
+                }
+            }
+            items(proofsToReview, key = { "proof-${it.id}" }) { student ->
+                BillingMovementRow(
+                    student = student,
+                    monthlyFee = studentRoutineMonthlyFee(student, routines),
+                    onReviewClick = { onReviewPayment(student) }
+                )
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FinancialCard("Em dia", students.count { it.status == "active" }.toString(), Color(0xFF4CAF50), Modifier.weight(1f))
-                FinancialCard("A receber", dueToday.size.toString(), Color(0xFFFFC107), Modifier.weight(1f))
+                FinancialCard(
+                    "Em dia",
+                    paidStudents.size.toString(),
+                    Color(0xFF4CAF50),
+                    Modifier.weight(1f).clickable { filter = if (filter == "em_dia") null else "em_dia" }
+                )
+                FinancialCard(
+                    "A receber",
+                    pendingStudents.size.toString(),
+                    Color(0xFFFFC107),
+                    Modifier.weight(1f).clickable { filter = if (filter == "a_receber") null else "a_receber" }
+                )
             }
         }
-        item { Text("Cobranças", fontSize = 20.sp, fontWeight = FontWeight.SemiBold) }
-        if (billableStudents.isEmpty()) {
+        item {
+            Text(
+                "Cobranças" + when (filter) {
+                    "em_dia" -> " · Em dia"
+                    "a_receber" -> " · A receber"
+                    else -> ""
+                },
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        if (visibleStudents.isEmpty()) {
             item {
                 Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
-                    Text("Nenhuma cobrança prevista.", Modifier.fillMaxWidth().padding(18.dp))
+                    Text("Nenhuma cobrança aqui.", Modifier.fillMaxWidth().padding(18.dp))
                 }
             }
         } else {
-            items(billableStudents.sortedBy { it.billingDay }) { student ->
+            items(visibleStudents.sortedBy { it.billingDay }, key = { it.id }) { student ->
                 BillingMovementRow(
                     student = student,
                     monthlyFee = studentRoutineMonthlyFee(student, routines),
-                    dueToday = student.billingDay == today
+                    onReviewClick = { onReviewPayment(student) }
                 )
             }
         }
@@ -282,24 +317,206 @@ fun EarningsScreen(students: List<Student>, routines: List<DirectoryEntry>) {
 }
 
 @Composable
-fun BillingMovementRow(student: Student, monthlyFee: String, dueToday: Boolean) {
-    Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier.size(42.dp).clip(CircleShape).background(if (dueToday) Color(0xFFFFC107) else PurpleDeep),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Outlined.Payments, contentDescription = null, tint = if (dueToday) PurpleDeep else Lime)
+fun BillingMovementRow(student: Student, monthlyFee: String, onReviewClick: () -> Unit) {
+    val pending = student.paymentStatus != "paid"
+    val hasProof = !student.paymentProofUrl.isNullOrBlank()
+    Surface(
+        color = PurpleSurface,
+        shape = RoundedCornerShape(14.dp),
+        modifier = if (hasProof) Modifier.clickable(onClick = onReviewClick) else Modifier
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(42.dp).clip(CircleShape).background(if (pending) Color(0xFFFFC107) else PurpleDeep),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Outlined.Payments, contentDescription = null, tint = if (pending) PurpleDeep else Lime)
+                }
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                    Text(student.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("Vence dia ${student.billingDay}", color = Color.White.copy(alpha = .62f), fontSize = 12.sp)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(formatMoneyLabel(monthlyFee), color = Color.White, fontWeight = FontWeight.Bold)
+                    if (pending && student.daysOverdue > 0) {
+                        Text("${student.daysOverdue}d de atraso", color = Color(0xFFFF6B6B), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    } else if (pending) {
+                        Text("Aguardando pagamento", color = Color(0xFFFFD166), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
-            Column(Modifier.padding(start = 12.dp).weight(1f)) {
-                Text(student.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text("Vence dia ${student.billingDay}", color = Color.White.copy(alpha = .62f), fontSize = 12.sp)
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(formatMoneyLabel(monthlyFee), color = Color.White, fontWeight = FontWeight.Bold)
-                if (dueToday) Text("Cobrar hoje", color = Color(0xFFFFD166), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            if (hasProof) {
+                HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color.White.copy(alpha = .12f))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Comprovante enviado pelo aluno", color = Lime, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                    AssistChip(
+                        onClick = onReviewClick,
+                        label = { Text("Validar", fontWeight = FontWeight.Bold) },
+                        colors = AssistChipDefaults.assistChipColors(containerColor = Lime, labelColor = PurpleDeep)
+                    )
+                }
+                if (!student.paymentProofRejectionReason.isNullOrBlank()) {
+                    Text(
+                        "Recusado anteriormente: ${student.paymentProofRejectionReason}",
+                        color = Color(0xFFFF6B6B),
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PaymentReviewScreen(
+    student: Student,
+    onBack: () -> Unit,
+    onApprove: () -> Unit,
+    onReject: (String) -> Unit
+) {
+    val context = LocalContext.current
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var isPdf by remember { mutableStateOf(false) }
+    var pageBitmaps by remember { mutableStateOf<List<android.graphics.Bitmap>>(emptyList()) }
+    var imageBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var showDeclineDialog by remember { mutableStateOf(false) }
+    var declineReason by remember { mutableStateOf("") }
+
+    LaunchedEffect(student.paymentProofUrl) {
+        val url = student.paymentProofUrl
+        if (url.isNullOrBlank()) {
+            loading = false
+            error = "Nenhum comprovante enviado"
+            return@LaunchedEffect
+        }
+        loading = true
+        error = null
+        val result = kotlin.runCatching {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val connection = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = 15_000
+                    readTimeout = 30_000
+                }
+                connection.connect()
+                val contentType = connection.contentType.orEmpty()
+                val bytes = connection.inputStream.use { it.readBytes() }
+                connection.disconnect()
+                val pdf = contentType.contains("pdf", true) || url.lowercase().endsWith(".pdf")
+                if (pdf) {
+                    val file = java.io.File(context.cacheDir, "payment_proof_${student.id}.pdf")
+                    file.writeBytes(bytes)
+                    val pfd = android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY)
+                    val renderer = android.graphics.pdf.PdfRenderer(pfd)
+                    val bitmaps = (0 until renderer.pageCount).map { index ->
+                        renderer.openPage(index).use { page ->
+                            android.graphics.Bitmap.createBitmap(page.width * 2, page.height * 2, android.graphics.Bitmap.Config.ARGB_8888).also { bitmap ->
+                                bitmap.eraseColor(android.graphics.Color.WHITE)
+                                page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            }
+                        }
+                    }
+                    renderer.close()
+                    pfd.close()
+                    Triple(true, bitmaps, null as android.graphics.Bitmap?)
+                } else {
+                    val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    Triple(false, emptyList<android.graphics.Bitmap>(), bitmap)
+                }
+            }
+        }
+        result.onSuccess { (pdf, bitmaps, bitmap) ->
+            isPdf = pdf
+            pageBitmaps = bitmaps
+            imageBitmap = bitmap
+            loading = false
+        }.onFailure {
+            error = "Não foi possível abrir o comprovante"
+            loading = false
+        }
+    }
+
+    Scaffold(
+        containerColor = PurpleBackground,
+        topBar = {
+            TopAppBar(
+                title = { Text(student.name, fontWeight = FontWeight.Bold) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar") }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = PurpleBackground)
+            )
+        }
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when {
+                    loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Lime) }
+                    error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(error.orEmpty(), color = Color.White.copy(alpha = .7f))
+                    }
+                    isPdf -> LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(pageBitmaps) { bitmap ->
+                            Image(bitmap.asImageBitmap(), contentDescription = "Página do comprovante", modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                    imageBitmap != null -> Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+                        Image(imageBitmap!!.asImageBitmap(), contentDescription = "Comprovante", modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = { showDeclineDialog = true },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = PurpleSurface, contentColor = Color.White),
+                    shape = RoundedCornerShape(50)
+                ) { Text("Recusar", fontWeight = FontWeight.Bold) }
+                Button(
+                    onClick = onApprove,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                    shape = RoundedCornerShape(50)
+                ) { Text("Aprovar", fontWeight = FontWeight.Bold) }
+            }
+        }
+    }
+
+    if (showDeclineDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeclineDialog = false },
+            title = { Text("Recusar comprovante") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Explique o motivo para o aluno. Ele poderá enviar novamente.")
+                    TextField(
+                        value = declineReason,
+                        onValueChange = { declineReason = it },
+                        placeholder = { Text("Ex: comprovante ilegível") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { onReject(declineReason.trim()) },
+                    enabled = declineReason.isNotBlank()
+                ) { Text("Recusar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeclineDialog = false }) { Text("Cancelar") }
+            }
+        )
     }
 }
 
@@ -324,34 +541,6 @@ fun formatCurrency(value: Double): String =
         maximumFractionDigits = 2
     }.format(value)
 
-fun showTestNotification(context: Context) {
-    val channelId = "agego_billing_tests"
-    val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val channel = NotificationChannel(
-            channelId,
-            "Testes de cobrança",
-            NotificationManager.IMPORTANCE_DEFAULT
-        ).apply {
-            description = "Notificações locais para testar lembretes de cobrança."
-        }
-        manager.createNotificationChannel(channel)
-    }
-
-    val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        android.app.Notification.Builder(context, channelId)
-    } else {
-        android.app.Notification.Builder(context)
-    }
-        .setSmallIcon(R.drawable.ic_nav_financeiro)
-        .setContentTitle("AgeGo")
-        .setContentText("Teste de notificação de cobrança funcionando.")
-        .setAutoCancel(true)
-        .build()
-
-    manager.notify(5001, notification)
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EventsScreen(
@@ -371,6 +560,7 @@ fun EventsScreen(
         actions = listOf(DirectoryAction("Novo evento", R.drawable.ic_events, onNewEvent)),
         items = events.sortedBy { it.eventDate },
         loading = loading,
+        itemId = { it.id },
         itemTitle = { it.name },
         itemStatus = { event ->
             when {

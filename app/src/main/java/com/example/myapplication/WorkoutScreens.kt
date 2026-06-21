@@ -20,6 +20,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -148,8 +149,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.myapplication.data.Announcement
-import com.example.myapplication.data.CommunityPost
-import com.example.myapplication.data.CommunityPostType
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.Workout
 import com.example.myapplication.data.Event
@@ -172,7 +171,6 @@ fun WorkoutsScreen(
     workouts: List<Workout>,
     loading: Boolean,
     onBack: () -> Unit,
-    onModalitiesClick: () -> Unit,
     onNewWorkout: () -> Unit,
     onWorkoutClick: (Workout) -> Unit
 ) {
@@ -184,11 +182,11 @@ fun WorkoutsScreen(
         selectedFilter = filter,
         onFilterSelected = { filter = it },
         actions = listOf(
-            DirectoryAction("Novo treino", R.drawable.ic_option_treinos, onNewWorkout),
-            DirectoryAction("Rotinas", R.drawable.ic_option_modalidades, onModalitiesClick)
+            DirectoryAction("Novo treino", R.drawable.ic_option_treinos, onNewWorkout)
         ),
         items = workouts,
         loading = loading,
+        itemId = { it.id },
         itemTitle = { it.name },
         itemStatus = { if (it.status == "active") "Ativos" else "Inativos" },
         itemMatchesQuery = { workout, query -> workout.name.contains(query, true) },
@@ -200,22 +198,11 @@ fun WorkoutsScreen(
 @Composable
 fun WorkoutDetailScreen(
     workout: Workout?,
-    routines: List<DirectoryEntry>,
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onDelete: (String) -> Unit
 ) {
     var selectedTab by remember(workout?.id) { mutableStateOf("Dados") }
-    val linkedRoutines = remember(workout?.id, workout?.name, routines) {
-        if (workout == null) {
-            emptyList()
-        } else {
-            routines.filter { routine ->
-                routine.description.contains(workout.name, ignoreCase = true) ||
-                    routine.description.contains(workout.id, ignoreCase = true)
-            }
-        }
-    }
     val structureLines = remember(workout?.description) {
         workoutStructureLines(workout?.description)
     }
@@ -258,6 +245,7 @@ fun WorkoutDetailScreen(
                     item {
                         WorkoutDetailSection(title = "Dados gerais") {
                             WorkoutDetailRow("Nome", workout.name)
+                            WorkoutDetailRow("Valor", formatMoneyLabel(extractRoutinePrice(workout.description.orEmpty())))
                             WorkoutDetailRow("Status", workoutStatusLabel(workout.status))
                             WorkoutDetailRow("Tipo", workout.iconName?.replace('_', ' ')?.ifBlank { "Treino" } ?: "Treino")
                         }
@@ -281,19 +269,6 @@ fun WorkoutDetailScreen(
                             } else {
                                 structureLines.forEach { line ->
                                     WorkoutStructureLine(line)
-                                }
-                            }
-                        }
-                    }
-                }
-                else -> {
-                    item {
-                        WorkoutDetailSection(title = "Onde este treino esta") {
-                            if (linkedRoutines.isEmpty()) {
-                                WorkoutDetailMutedText("Este treino ainda nao aparece em nenhuma rotina.")
-                            } else {
-                                linkedRoutines.forEach { routine ->
-                                    WorkoutRoutineLinkRow(routine)
                                 }
                             }
                         }
@@ -330,7 +305,7 @@ data class WorkoutStructureStep(
 fun parseWorkoutStructure(description: String?): List<WorkoutStructureSection> {
     return workoutStructureLines(description).mapNotNull { line ->
         val parts = line.split(":", limit = 2)
-        if (parts.size != 2 || !parts[0].trim().startsWith("Secao")) return@mapNotNull null
+        if (parts.size != 2 || (!parts[0].trim().startsWith("Dia") && !parts[0].trim().startsWith("Secao"))) return@mapNotNull null
         val steps = parts[1]
             .split(";")
             .mapNotNull { rawStep ->
@@ -350,7 +325,7 @@ fun parseWorkoutStructure(description: String?): List<WorkoutStructureSection> {
 @Composable
 fun WorkoutDetailTabs(selected: String, onSelected: (String) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("Dados", "Estrutura", "Rotinas").forEach { tab ->
+        listOf("Dados", "Estrutura").forEach { tab ->
             SlimFilterBadge(
                 label = tab,
                 selected = selected == tab,
@@ -507,51 +482,23 @@ fun RoutinesScreen(
 ) {
     var filter by remember { mutableStateOf("Todos") }
     DirectoryScreen(
-        title = "Hub Fit - Rotinas",
-        searchPlaceholder = "Pesquisar rotina",
+        title = "Hub Fit - Treinos",
+        searchPlaceholder = "Pesquisar treino",
         filters = listOf("Todos", "Ativas", "Inativas"),
         selectedFilter = filter,
         onFilterSelected = { filter = it },
         actions = listOf(
-            DirectoryAction("Nova rotina", R.drawable.ic_option_modalidades, onNewRoutine),
+            DirectoryAction("Novo treino", R.drawable.ic_option_treinos, onNewRoutine),
             DirectoryAction("Grupos", R.drawable.ic_option_grupos, onGroupsClick)
         ),
         items = routines,
         loading = false,
+        itemId = { it.id },
         itemTitle = { it.name },
         itemStatus = { directoryStatusLabel(it.status) },
         itemMatchesQuery = { modality, query -> modality.name.contains(query, true) },
         onBack = onBack,
         onItemClick = onRoutineClick
-    )
-}
-
-@Composable
-fun GroupsScreen(
-    groups: List<DirectoryEntry>,
-    onBack: () -> Unit,
-    onStudentsClick: () -> Unit,
-    onNewGroup: () -> Unit,
-    onGroupClick: (DirectoryEntry) -> Unit
-) {
-    var filter by remember { mutableStateOf("Todos") }
-    DirectoryScreen(
-        title = "Hub Fit - Grupos",
-        searchPlaceholder = "Pesquisar grupo",
-        filters = listOf("Todos", "Ativos", "Inativos"),
-        selectedFilter = filter,
-        onFilterSelected = { filter = it },
-        actions = listOf(
-            DirectoryAction("Novo grupo", R.drawable.ic_option_grupos, onNewGroup),
-            DirectoryAction("Alunos", R.drawable.ic_option_alunos, onStudentsClick)
-        ),
-        items = groups,
-        loading = false,
-        itemTitle = { it.name },
-        itemStatus = { directoryStatusLabel(it.status) },
-        itemMatchesQuery = { group, query -> group.name.contains(query, true) },
-        onBack = onBack,
-        onItemClick = onGroupClick
     )
 }
 
@@ -585,14 +532,14 @@ fun RoutineBuilderScreen(
     ) {
         WorkoutFlowHeader(
             breadcrumb = when (step) {
-                0 -> "Rotinas"
+                0 -> "Treinos"
                 1 -> "Dias de treino"
-                else -> "Resumo da rotina"
+                else -> "Resumo do treino"
             },
             title = when (step) {
-                0 -> if (routine == null) "Adicionar nova rotina" else "Editar rotina"
-                1 -> "Construtor de rotina"
-                else -> "Rotina construida"
+                0 -> if (routine == null) "Adicionar novo treino" else "Editar treino"
+                1 -> "Dias do treino"
+                else -> "Treino construido"
             },
             onBack = { if (step > 0) step-- else onBack() },
             readyLabel = if (step == 1) "Resumo" else null,
@@ -604,7 +551,7 @@ fun RoutineBuilderScreen(
         WorkoutBottomPanel(expanded = step == 1) {
             when (step) {
                 0 -> {
-                    WorkoutNameStep(name = name, onNameChange = { name = it }, placeholder = "Nome da rotina")
+                    WorkoutNameStep(name = name, onNameChange = { name = it }, placeholder = "Nome do treino")
                     WorkoutNextButton(enabled = name.isNotBlank()) { step = 1 }
                 }
                 1 -> {
@@ -689,9 +636,9 @@ fun RoutineDaysStep(
             }
         }
         if (workouts.isEmpty()) {
-            item { EmptyRoutineBuilderState("Crie treinos antes de montar uma rotina.") }
+            item { EmptyRoutineBuilderState("Nenhuma atividade disponível para compor os dias.") }
         } else {
-            items(filteredWorkouts) { workout ->
+            items(filteredWorkouts, key = { it.id }) { workout ->
                 val selected = workout.id in activeDay.workoutIds
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable {
@@ -775,7 +722,7 @@ fun RoutineSummaryStep(
     val minimumDistanceKm = days.flatMap { it.workoutIds }.sumOf { id -> minimumWorkoutDistanceKm(workouts.firstOrNull { it.id == id }) }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        FormTextField(price, { next -> onPriceChange(next.filter { it.isDigit() || it == ',' || it == '.' }) }, "Valor geral da rotina")
+        FormTextField(price, { next -> onPriceChange(next.filter { it.isDigit() || it == ',' || it == '.' }) }, "Valor do treino")
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             RoutineMetricCard("Treinos inclusos", includedWorkoutCount.toString(), Modifier.weight(1f))
             RoutineMetricCard("Tempo minimo", "${minimumMinutes.cleanRoutineNumber()} min", Modifier.weight(1f))
@@ -783,7 +730,7 @@ fun RoutineSummaryStep(
         }
         Surface(color = PurpleBackground, shape = RoundedCornerShape(16.dp)) {
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(name.ifBlank { "Rotina" }, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(name.ifBlank { "Treino" }, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Text("${days.size} dias de treino", color = Lime, fontWeight = FontWeight.SemiBold)
                 days.forEach { day ->
                     val names = day.workoutIds.mapNotNull { id -> workouts.firstOrNull { it.id == id }?.name }
@@ -798,7 +745,7 @@ fun RoutineSummaryStep(
         SaveButton(enabled = name.isNotBlank()) { onSave() }
         if (onDelete != null) {
             TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
-                Text("Excluir rotina", color = Color.White.copy(alpha = .62f))
+                Text("Excluir treino", color = Color.White.copy(alpha = .62f))
             }
         }
     }
@@ -916,6 +863,204 @@ fun StudentFormScreen(
     }
 }
 
+@Composable
+fun NewStudentFlowScreen(
+    workouts: List<Workout>,
+    onBack: () -> Unit,
+    onSave: (Student, Workout?, () -> Unit) -> Unit
+) {
+    var step by remember { mutableStateOf(0) }
+    var name by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
+    var createFromScratch by remember { mutableStateOf<Boolean?>(null) }
+    var selectedWorkoutId by remember { mutableStateOf("") }
+    var price by remember { mutableStateOf("") }
+    var billingDay by remember { mutableStateOf(5) }
+    var sections by remember { mutableStateOf(listOf(WorkoutBuilderSection(1, selected = true))) }
+    var saving by remember { mutableStateOf(false) }
+
+    val publicWorkouts = workouts.filterNot { it.description.orEmpty().lineSequence().any { line -> line.trim() == "Visibilidade: privado" } }
+    val selectedWorkout = publicWorkouts.firstOrNull { it.id == selectedWorkoutId }
+    val resultPrice = if (createFromScratch == true) price else extractRoutinePrice(selectedWorkout?.description.orEmpty())
+    val resultName = if (createFromScratch == true) "Treino de ${name.trim()}" else selectedWorkout?.name.orEmpty()
+    val resultSections = if (createFromScratch == true) sections else builderSectionsFromDescription(selectedWorkout?.description)
+
+    fun saveStudentAndWorkout() {
+        if (saving) return
+        saving = true
+        val customWorkout = if (createFromScratch == true) Workout(
+            id = "",
+            name = resultName,
+            status = "active",
+            description = workoutPlanDescription(price, sections, private = true)
+        ) else null
+        onSave(
+            Student(
+                id = "",
+                name = name.trim(),
+                phone = phone.trim(),
+                routine = selectedWorkout?.id ?: resultName,
+                planName = resultName,
+                monthlyFee = resultPrice,
+                billingDay = billingDay,
+                status = "active"
+            ),
+            customWorkout
+        ) {
+            saving = false
+            step = 5
+        }
+    }
+
+    fun goBack() {
+        when {
+            step == 0 -> onBack()
+            step == 5 -> onBack()
+            else -> step--
+        }
+    }
+
+    BackHandler { goBack() }
+    Column(Modifier.fillMaxSize().background(PurpleBackground)) {
+        WorkoutFlowHeader(
+            breadcrumb = when (step) {
+                0 -> "Alunos"
+                1 -> "Novo aluno"
+                2 -> if (createFromScratch == true) "Treino personalizado" else "Treinos"
+                3 -> "Construtor de treino"
+                4 -> "Valor do treino"
+                else -> "Aluno criado"
+            },
+            title = when (step) {
+                0 -> "Adicionar novo aluno"
+                1 -> "Como deseja montar o treino?"
+                2 -> "Escolha um treino"
+                3 -> "Construa os dias"
+                4 -> "Revise e defina o valor"
+                else -> "Tudo pronto"
+            },
+            onBack = ::goBack,
+            iconRes = R.drawable.ic_option_alunos,
+            readyLabel = if (step == 3) "Valor" else null,
+            onReady = if (step == 3) ({ step = 4 }) else null
+        )
+        if (step != 3) Spacer(Modifier.weight(1f))
+        WorkoutBottomPanel(expanded = step == 3) {
+            when (step) {
+                0 -> {
+                    WorkoutNameStep(name, { name = it }, "Nome do aluno")
+                    WorkoutNameStep(phone, { phone = it.filter { char -> char.isDigit() || char in "()+- " } }, "Telefone")
+                    BillingDayPicker(billingDay) { billingDay = it }
+                    WorkoutNextButton(name.isNotBlank() && phone.isNotBlank()) { step = 1 }
+                }
+                1 -> {
+                    Text("Escolha o ponto de partida", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    NewStudentChoiceCard(
+                        title = "Usar treino existente",
+                        subtitle = "Mantém o valor e os dias definidos no treino.",
+                        selected = createFromScratch == false
+                    ) { createFromScratch = false }
+                    NewStudentChoiceCard(
+                        title = "Criar do zero",
+                        subtitle = "Personalize preço, objetivo, dias e treinos.",
+                        selected = createFromScratch == true
+                    ) { createFromScratch = true }
+                    WorkoutNextButton(createFromScratch != null) { step = if (createFromScratch == true) 3 else 2 }
+                }
+                2 -> if (createFromScratch == false) {
+                    if (publicWorkouts.isEmpty()) {
+                        EmptyRoutineBuilderState("Nenhum treino disponível. Volte e escolha criar do zero.")
+                    } else {
+                        Column(Modifier.heightIn(max = 390.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            publicWorkouts.forEach { workout ->
+                                NewStudentChoiceCard(
+                                    title = workout.name,
+                                    subtitle = listOfNotNull(
+                                        extractRoutinePrice(workout.description.orEmpty()).takeIf { it.isNotBlank() }?.let { "R$ $it" },
+                                        parseWorkoutStructure(workout.description).size.takeIf { it > 0 }?.let { "$it dias" }
+                                    ).joinToString(" • ").ifBlank { "Treino estruturado" },
+                                    selected = selectedWorkoutId == workout.id
+                                ) { selectedWorkoutId = workout.id }
+                            }
+                        }
+                        SaveButton(enabled = selectedWorkoutId.isNotBlank() && !saving) { saveStudentAndWorkout() }
+                    }
+                }
+                3 -> WorkoutBuilderStep(sections) { sections = it }
+                4 -> {
+                    WorkoutNameStep(price, { next -> price = next.filter { it.isDigit() || it == ',' || it == '.' } }, "Valor mensal")
+                    NewStudentResults(
+                        studentName = name,
+                        planName = resultName,
+                        price = resultPrice,
+                        objective = "Treino exclusivo construído para o aluno.",
+                        sections = resultSections
+                    )
+                    SaveButton(enabled = price.isNotBlank() && sections.any { it.goals.isNotEmpty() } && !saving) { saveStudentAndWorkout() }
+                }
+                else -> {
+                    Text("Aluno criado com sucesso", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text("$name já está vinculado ao treino $resultName.", color = Color.White.copy(alpha = .72f))
+                    SaveButton(enabled = true) { onBack() }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewStudentChoiceCard(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        color = if (selected) Lime.copy(alpha = .18f) else PurpleBackground,
+        shape = RoundedCornerShape(16.dp),
+        border = if (selected) BorderStroke(1.dp, Lime) else null
+    ) {
+        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(if (selected) Icons.Outlined.Check else Icons.Outlined.FitnessCenter, null, tint = Lime)
+            Column(Modifier.padding(start = 12.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, color = Color.White, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = Color.White.copy(alpha = .64f), fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NewStudentResults(
+    studentName: String,
+    planName: String,
+    price: String,
+    objective: String,
+    sections: List<WorkoutBuilderSection>
+) {
+    val goals = sections.flatMap { it.goals }
+    val minutes = goals.filter { it.type == WorkoutGoalType.Tempo }
+        .sumOf { (rawWorkoutValue(it.value).replace(',', '.').toDoubleOrNull() ?: 0.0) * it.reps }
+    val distance = goals.filter { it.type == WorkoutGoalType.Distancia }
+        .sumOf { (rawWorkoutValue(it.value).replace(',', '.').toDoubleOrNull() ?: 0.0) * it.reps }
+    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(studentName, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text(planName, color = Lime, fontWeight = FontWeight.SemiBold)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            RoutineMetricCard("Dias", sections.count { it.goals.isNotEmpty() }.toString(), Modifier.weight(1f))
+            RoutineMetricCard("Tempo mínimo", "${minutes.cleanRoutineNumber()} min", Modifier.weight(1f))
+            RoutineMetricCard("Distância mín.", "${distance.cleanRoutineNumber()} km", Modifier.weight(1f))
+        }
+        Surface(color = PurpleBackground, shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Resultados esperados", color = Color.White, fontWeight = FontWeight.Bold)
+                Text(
+                    objective.ifBlank { "Evoluir com consistência seguindo os dias do treino selecionado." },
+                    color = Color.White.copy(alpha = .76f), fontSize = 13.sp
+                )
+                Text("Frequência: ${sections.count { it.goals.isNotEmpty() }} dias por ciclo", color = Color.White.copy(alpha = .76f), fontSize = 13.sp)
+                Text("Investimento: ${formatMoneyLabel(price)}", color = Lime, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkoutFormScreen(
@@ -926,7 +1071,10 @@ fun WorkoutFormScreen(
 ) {
     var step by remember(workout?.id) { mutableStateOf(0) }
     var name by remember(workout?.id) { mutableStateOf(workout?.name.orEmpty()) }
-    var sections by remember(workout?.id) { mutableStateOf(listOf(WorkoutBuilderSection(1, selected = true))) }
+    var price by remember(workout?.id) { mutableStateOf(extractRoutinePrice(workout?.description.orEmpty())) }
+    var sections by remember(workout?.id) {
+        mutableStateOf(builderSectionsFromDescription(workout?.description).ifEmpty { listOf(WorkoutBuilderSection(1, selected = true)) })
+    }
 
     BackHandler { if (step > 0) step-- else onBack() }
 
@@ -938,30 +1086,17 @@ fun WorkoutFormScreen(
         WorkoutFlowHeader(
             breadcrumb = when (step) {
                 0 -> "Treinos"
-                1 -> "Informacoes do treino"
-                else -> "Construtor de treino"
+                1 -> "Construtor de treino"
+                else -> "Resumo do treino"
             },
             title = when (step) {
                 0 -> "Adicionar novo treino"
                 1 -> "Construtor de treino"
-                else -> "Treino criado"
+                else -> "Treino pronto"
             },
             onBack = { if (step > 0) step-- else onBack() },
-            readyLabel = if (step == 1) "Pronto" else null,
-            onReady = if (step == 1) {
-                {
-                    onSave(
-                        Workout(
-                            id = workout?.id.orEmpty(),
-                            name = name.trim(),
-                            description = workoutSectionsSummary(sections),
-                            iconName = workout?.iconName,
-                            status = "active"
-                        )
-                    )
-                    step = 2
-                }
-            } else null
+            readyLabel = if (step == 1) "Resumo" else null,
+            onReady = if (step == 1) ({ step = 2 }) else null
         )
 
         if (step != 1) {
@@ -980,13 +1115,51 @@ fun WorkoutFormScreen(
                         onSectionsChange = { sections = it }
                     )
                 }
-                else -> WorkoutCreatedStep(
-                    onBackToWorkouts = onBack,
-                    onAddModality = { },
-                    onDelete = if (workout != null && onDelete != null) ({ onDelete(workout.id) }) else null
-                )
+                else -> WorkoutPlanSummaryStep(name, price, { price = it }, sections) {
+                    onSave(
+                        Workout(
+                            id = workout?.id.orEmpty(),
+                            name = name.trim(),
+                            description = workoutPlanDescription(price, sections),
+                            iconName = workout?.iconName,
+                            status = "active"
+                        )
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun WorkoutPlanSummaryStep(
+    name: String,
+    price: String,
+    onPriceChange: (String) -> Unit,
+    sections: List<WorkoutBuilderSection>,
+    onSave: () -> Unit
+) {
+    val goals = sections.flatMap { it.goals }
+    val minutes = goals.filter { it.type == WorkoutGoalType.Tempo }
+        .sumOf { (rawWorkoutValue(it.value).replace(',', '.').toDoubleOrNull() ?: 0.0) * it.reps }
+    val distance = goals.filter { it.type == WorkoutGoalType.Distancia }
+        .sumOf { (rawWorkoutValue(it.value).replace(',', '.').toDoubleOrNull() ?: 0.0) * it.reps }
+    Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        WorkoutNameStep(price, { onPriceChange(it.filter { char -> char.isDigit() || char == ',' || char == '.' }) }, "Valor do treino")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            RoutineMetricCard("Dias", sections.count { it.goals.isNotEmpty() }.toString(), Modifier.weight(1f))
+            RoutineMetricCard("Tempo", "${formatSectionNumber(minutes)} min", Modifier.weight(1f))
+            RoutineMetricCard("Distância", "${formatSectionNumber(distance)} km", Modifier.weight(1f))
+        }
+        Surface(color = PurpleBackground, shape = RoundedCornerShape(16.dp)) {
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                sections.filter { it.goals.isNotEmpty() }.forEach { section ->
+                    Text("Dia ${section.number}: ${sectionTotalLabel(section.goals)}", color = Lime, fontSize = 13.sp)
+                }
+            }
+        }
+        SaveButton(enabled = name.isNotBlank() && price.isNotBlank() && goals.isNotEmpty(), onClick = onSave)
     }
 }
 
@@ -1016,7 +1189,8 @@ fun WorkoutFlowHeader(
     title: String,
     onBack: () -> Unit,
     readyLabel: String? = null,
-    onReady: (() -> Unit)? = null
+    onReady: (() -> Unit)? = null,
+    iconRes: Int = R.drawable.ic_option_treinos
 ) {
     Column(
         modifier = Modifier
@@ -1063,7 +1237,7 @@ fun WorkoutFlowHeader(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                painter = painterResource(R.drawable.ic_option_treinos),
+                painter = painterResource(iconRes),
                 contentDescription = "Treino",
                 modifier = Modifier.size(120.dp),
                 tint = Color.White
@@ -1186,22 +1360,38 @@ fun WorkoutBuilderStep(
                     }
                 )
             }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .border(1.dp, Color(0xFF5529B0).copy(alpha = .7f), RoundedCornerShape(14.dp))
-                    .background(Color(0xFF2C1252))
-                    .clickable {
-                        onSectionsChange(
-                            sections.map { it.copy(selected = false) } +
-                                WorkoutBuilderSection(sections.size + 1, selected = true)
-                        )
-                    },
-                contentAlignment = Alignment.Center
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Adicionar etapa +", color = Color.White.copy(alpha = .78f), fontSize = 14.sp)
+                Surface(
+                    modifier = Modifier
+                        .height(34.dp)
+                        .clickable {
+                            val nextCount = if (sections.size >= 5) 1 else sections.size + 1
+                            val nextSections = if (nextCount == 1) {
+                                listOf(sections.firstOrNull()?.copy(number = 1, selected = true)
+                                    ?: WorkoutBuilderSection(1, selected = true))
+                            } else {
+                                sections.map { it.copy(selected = false) } +
+                                    WorkoutBuilderSection(nextCount, selected = true)
+                            }
+                            onSectionsChange(nextSections)
+                        },
+                    color = Color(0xFF2C1252),
+                    shape = RoundedCornerShape(50),
+                    border = BorderStroke(1.dp, Lime.copy(alpha = .65f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = null, tint = Lime, modifier = Modifier.size(16.dp))
+                        Text("Dias ${sections.size}/5", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
         }
 
@@ -1292,7 +1482,7 @@ fun WorkoutSectionCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Secao ${section.number}",
+                    "Dia ${section.number}",
                     color = if (section.selected) Lime else Color.White,
                     fontSize = 16.sp
                 )
@@ -1684,9 +1874,38 @@ fun workoutSectionsSummary(sections: List<WorkoutBuilderSection>): String {
         val goals = section.goals.joinToString("; ") { goal ->
             "${goal.name}: ${formattedWorkoutGoalValue(goal)} x${goal.reps}"
         }
-        "Secao ${section.number}: $goals"
+        "Dia ${section.number}: $goals"
     }
 }
+
+fun workoutPlanDescription(price: String, sections: List<WorkoutBuilderSection>, private: Boolean = false): String =
+    listOfNotNull(
+        "Visibilidade: privado".takeIf { private },
+        "Valor: R$ ${price.trim()}".takeIf { price.isNotBlank() },
+        workoutSectionsSummary(sections).takeIf { it.isNotBlank() }
+    ).joinToString("\n")
+
+fun builderSectionsFromDescription(description: String?): List<WorkoutBuilderSection> =
+    parseWorkoutStructure(description).mapIndexed { sectionIndex, section ->
+        WorkoutBuilderSection(
+            number = Regex("""\d+""").find(section.label)?.value?.toIntOrNull() ?: sectionIndex + 1,
+            selected = sectionIndex == 0,
+            goals = section.steps.mapIndexed { goalIndex, step ->
+                val type = when {
+                    step.value.contains("km", true) -> WorkoutGoalType.Distancia
+                    step.value.contains("desc", true) -> WorkoutGoalType.Repouso
+                    else -> WorkoutGoalType.Tempo
+                }
+                WorkoutGoal(
+                    id = sectionIndex * 1000 + goalIndex + 1,
+                    name = step.name,
+                    value = rawWorkoutValue(step.value),
+                    reps = step.reps.filter { it.isDigit() }.toIntOrNull() ?: 1,
+                    type = type
+                )
+            }
+        )
+    }
 
 fun sectionTotalLabel(goals: List<WorkoutGoal>): String {
     val tempoTotal = goals

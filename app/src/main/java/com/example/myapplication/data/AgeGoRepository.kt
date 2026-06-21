@@ -32,29 +32,33 @@ interface AgeGoRepository {
     suspend fun registerInstructor(name: String, email: String, phone: String): VerificationResult
     suspend fun verifyInstructor(contentResolver: ContentResolver, email: String, token: String, displayName: String, photoUri: Uri?): AuthSession
     suspend fun startStudentFirstAccess(phone: String): VerificationResult
-    suspend fun completeStudentFirstAccess(contentResolver: ContentResolver, phone: String, email: String, nickname: String, photoUri: Uri?, token: String): AuthSession
+    suspend fun completeStudentFirstAccess(contentResolver: ContentResolver, phone: String, email: String, nickname: String, photoUri: Uri?, frequencyDays: List<Int>, token: String): AuthSession
     suspend fun saveProfile(contentResolver: ContentResolver, name: String, photoUri: Uri?): AuthSession
     suspend fun loadSettings(): InstructorSettings
     suspend fun saveSettings(settings: InstructorSettings): InstructorSettings
     suspend fun loadDashboard(): DashboardData
+    suspend fun saveAnnouncement(content: String, targetType: String): Announcement
     suspend fun sendPresence()
     suspend fun saveStudent(student: Student): Student
     suspend fun deleteStudent(studentId: String)
     suspend fun saveWorkout(workout: Workout): Workout
     suspend fun deleteWorkout(workoutId: String)
-    suspend fun saveGroup(group: DirectoryItem): DirectoryItem
-    suspend fun deleteGroup(groupId: String)
     suspend fun saveRoutine(routine: DirectoryItem): DirectoryItem
     suspend fun deleteRoutine(routineId: String)
     suspend fun saveEvent(event: Event): Event
     suspend fun deleteEvent(eventId: String)
-    suspend fun saveCommunityPost(post: CommunityPost): CommunityPost
-    suspend fun toggleCommunityLike(postId: String)
-    suspend fun addCommunityComment(postId: String, content: String, parentCommentId: String? = null)
-    suspend fun toggleCommunityCommentLike(commentId: String)
-    suspend fun shareCommunityPost(postId: String)
+    suspend fun checkInEvent(eventId: String)
+    suspend fun openEventCheckIn(eventId: String)
+    suspend fun startGroupEvent(eventId: String)
+    suspend fun finishGroupEvent(eventId: String)
+    suspend fun saveEventRunResult(eventId: String, session: WorkoutSessionPayload)
     suspend fun uploadMedia(contentResolver: ContentResolver, uri: Uri): String
     suspend fun saveWorkoutSession(session: WorkoutSessionPayload)
+    suspend fun submitPaymentProof(url: String)
+    suspend fun approvePayment(studentId: String)
+    suspend fun rejectPayment(studentId: String, reason: String)
+    suspend fun saveChallenge(challengeId: String, name: String, description: String, targetType: String, targetValue: Double): List<Challenge>
+    suspend fun deleteChallenge(challengeId: String)
 }
 
 @Serializable
@@ -129,6 +133,7 @@ private data class StudentCompletePayload(
     val nickname: String,
     val photoBase64: String = "",
     val photoMimeType: String = "",
+    val frequencyDays: List<Int> = emptyList(),
     val token: String
 )
 
@@ -152,6 +157,7 @@ private data class UploadMediaResponse(val url: String)
 data class WorkoutSessionPayload(
     val routineId: String = "",
     val routineName: String = "",
+    val challengeId: String? = null,
     val dayNumber: Int = 1,
     val cycleStep: Int = 1,
     val elapsedMs: Long = 0,
@@ -245,13 +251,14 @@ class ApiAgeGoRepository(
         email: String,
         nickname: String,
         photoUri: Uri?,
+        frequencyDays: List<Int>,
         token: String
     ): AuthSession {
         val photo = photoUri?.let { preparePhotoPayload(contentResolver, it) }
         val session: AuthSession = request(
             "POST",
             "/auth/student/complete",
-            StudentCompletePayload(phone, email, nickname, photo?.base64.orEmpty(), photo?.mimeType.orEmpty(), token)
+            StudentCompletePayload(phone, email, nickname, photo?.base64.orEmpty(), photo?.mimeType.orEmpty(), frequencyDays, token)
         )
         saveSession(session)
         return session
@@ -318,6 +325,11 @@ class ApiAgeGoRepository(
     override suspend fun loadDashboard(): DashboardData =
         request("GET", "/dashboard")
 
+    override suspend fun saveAnnouncement(content: String, targetType: String): Announcement {
+        val response: AnnouncementResponse = request("POST", "/announcements", AnnouncementPayload(content, targetType))
+        return response.announcement
+    }
+
     override suspend fun sendPresence() {
         requestUnit("POST", "/presence/training-now")
     }
@@ -356,19 +368,6 @@ class ApiAgeGoRepository(
         requestUnit("DELETE", "/workouts/$workoutId")
     }
 
-    override suspend fun saveGroup(group: DirectoryItem): DirectoryItem {
-        val response: DirectoryResponse = if (group.id.isBlank()) {
-            request("POST", "/groups", group.toPayload())
-        } else {
-            request("PUT", "/groups/${group.id}", group.toPayload())
-        }
-        return response.group ?: group
-    }
-
-    override suspend fun deleteGroup(groupId: String) {
-        requestUnit("DELETE", "/groups/$groupId")
-    }
-
     override suspend fun saveRoutine(routine: DirectoryItem): DirectoryItem {
         val response: DirectoryResponse = if (routine.id.isBlank()) {
             request("POST", "/routines", routine.toPayload())
@@ -395,25 +394,24 @@ class ApiAgeGoRepository(
         requestUnit("DELETE", "/events/$eventId")
     }
 
-    override suspend fun saveCommunityPost(post: CommunityPost): CommunityPost {
-        val response: PostResponse = request("POST", "/posts", post.toPayload())
-        return response.post ?: post
+    override suspend fun checkInEvent(eventId: String) {
+        requestUnit("POST", "/events/$eventId/check-in")
     }
 
-    override suspend fun toggleCommunityLike(postId: String) {
-        requestUnit("POST", "/posts/$postId/like")
+    override suspend fun openEventCheckIn(eventId: String) {
+        requestUnit("POST", "/events/$eventId/open")
     }
 
-    override suspend fun addCommunityComment(postId: String, content: String, parentCommentId: String?) {
-        requestUnit("POST", "/posts/$postId/comments", CommentPayload(content, parentCommentId))
+    override suspend fun startGroupEvent(eventId: String) {
+        requestUnit("POST", "/events/$eventId/start")
     }
 
-    override suspend fun toggleCommunityCommentLike(commentId: String) {
-        requestUnit("POST", "/comments/$commentId/like")
+    override suspend fun finishGroupEvent(eventId: String) {
+        requestUnit("POST", "/events/$eventId/finish")
     }
 
-    override suspend fun shareCommunityPost(postId: String) {
-        requestUnit("POST", "/posts/$postId/share")
+    override suspend fun saveEventRunResult(eventId: String, session: WorkoutSessionPayload) {
+        requestUnit("POST", "/events/$eventId/results", session)
     }
 
     override suspend fun uploadMedia(contentResolver: ContentResolver, uri: Uri): String =
@@ -430,6 +428,31 @@ class ApiAgeGoRepository(
 
     override suspend fun saveWorkoutSession(session: WorkoutSessionPayload) {
         requestUnit("POST", "/workout-sessions", session)
+    }
+
+    override suspend fun submitPaymentProof(url: String) {
+        requestUnit("POST", "/me/payment-proof", PaymentProofPayload(url))
+    }
+
+    override suspend fun approvePayment(studentId: String) {
+        requestUnit("POST", "/students/$studentId/approve-payment")
+    }
+
+    override suspend fun rejectPayment(studentId: String, reason: String) {
+        requestUnit("POST", "/students/$studentId/reject-payment", RejectPaymentPayload(reason))
+    }
+
+    override suspend fun saveChallenge(challengeId: String, name: String, description: String, targetType: String, targetValue: Double): List<Challenge> {
+        val response: ChallengesResponse = if (challengeId.isBlank()) {
+            request("POST", "/challenges", ChallengePayload(name, description, targetType, targetValue))
+        } else {
+            request("PUT", "/challenges/$challengeId", ChallengePayload(name, description, targetType, targetValue))
+        }
+        return response.challenges
+    }
+
+    override suspend fun deleteChallenge(challengeId: String) {
+        requestUnit("DELETE", "/challenges/$challengeId")
     }
 
     private suspend fun preparePhotoPayload(contentResolver: ContentResolver, uri: Uri): UploadMediaPayload =
@@ -559,7 +582,8 @@ object RepositoryProvider {
     }
 
     fun create(): AgeGoRepository =
-        ApiAgeGoRepository(BuildConfig.AGEGO_API_URL, appContext)
+        appContext?.let { OfflineFirstAgeGoRepository(it, BuildConfig.AGEGO_API_URL) }
+            ?: ApiAgeGoRepository(BuildConfig.AGEGO_API_URL)
 }
 
 @Serializable
@@ -594,29 +618,10 @@ private data class EventPayload(
     val name: String,
     val description: String,
     val eventDate: String,
-    val location: String
-)
-
-@Serializable
-private data class PostPayload(
-    val type: String,
-    val title: String,
-    val content: String,
-    val target: String,
-    val linkedWorkoutId: String?,
-    val pollOptions: List<String>,
-    val mediaLabel: String?,
-    val gifLabel: String?,
-    val generatedImagePrompt: String?,
-    val scheduledAt: String?,
-    val location: String?,
-    val contentWarning: String?
-)
-
-@Serializable
-private data class CommentPayload(
-    val content: String,
-    val parentCommentId: String? = null
+    val location: String,
+    val latitude: Double?,
+    val longitude: Double?,
+    val coverPhotoUrl: String?
 )
 
 @Serializable
@@ -625,29 +630,21 @@ private data class StudentResponse(
     val accessCode: String = "",
     val accessCodeExpiresAt: String = ""
 )
+
 @Serializable private data class WorkoutResponse(val workout: Workout? = null)
-@Serializable private data class DirectoryResponse(val group: DirectoryItem? = null, val routine: DirectoryItem? = null)
+@Serializable private data class DirectoryResponse(val routine: DirectoryItem? = null)
 @Serializable private data class EventResponse(val event: Event? = null)
-@Serializable private data class PostResponse(val post: CommunityPost? = null)
+@Serializable private data class AnnouncementPayload(val content: String, val targetType: String)
+@Serializable private data class AnnouncementResponse(val announcement: Announcement)
+@Serializable private data class PaymentProofPayload(val url: String)
+@Serializable private data class RejectPaymentPayload(val reason: String)
+@Serializable private data class ChallengePayload(val name: String, val description: String, val targetType: String, val targetValue: Double)
+@Serializable private data class ChallengesResponse(val challenges: List<Challenge> = emptyList())
 
 private fun Student.toPayload() = StudentPayload(name, email, phone, routine, status, billingDay, monthlyFee)
 private fun Workout.toPayload() = WorkoutPayload(name, description.orEmpty(), iconName ?: "directions_run", status)
 private fun DirectoryItem.toPayload() = DirectoryPayload(name, description, status, studentIds)
-private fun Event.toPayload() = EventPayload(name, description.orEmpty(), eventDate, location.orEmpty())
-private fun CommunityPost.toPayload() = PostPayload(
-    type = type.name.lowercase(),
-    title = title,
-    content = content,
-    target = target,
-    linkedWorkoutId = linkedWorkoutId,
-    pollOptions = pollOptions,
-    mediaLabel = mediaLabel,
-    gifLabel = gifLabel,
-    generatedImagePrompt = generatedImagePrompt,
-    scheduledAt = scheduledAt,
-    location = location,
-    contentWarning = contentWarning
-)
+private fun Event.toPayload() = EventPayload(name, description.orEmpty(), eventDate, location.orEmpty(), latitude, longitude, coverPhotoUrl)
 
 private fun prepareImageUpload(bytes: ByteArray, mimeType: String): Pair<ByteArray, String> {
     if (!mimeType.startsWith("image/") || mimeType == "image/gif") return bytes to mimeType

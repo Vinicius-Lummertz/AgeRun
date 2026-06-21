@@ -63,7 +63,7 @@ import com.example.myapplication.ui.theme.PurpleSurface
 import coil.compose.AsyncImage
 import androidx.compose.foundation.shape.CircleShape
 
-private enum class AuthFlow { Entry, TrainerOnboarding }
+private enum class AuthFlow { Entry, StudentOnboarding, TrainerOnboarding }
 
 @Composable
 fun RealAuthScreen(
@@ -75,9 +75,10 @@ fun RealAuthScreen(
     onRegisterInstructor: (String, String, String, (String) -> Unit) -> Unit,
     onVerifyInstructor: (String, String, String, Uri?, () -> Unit, () -> Unit) -> Unit,
     onStartStudent: (String, (String) -> Unit) -> Unit,
-    onCompleteStudent: (String, String, String, Uri?, String) -> Unit
+    onCompleteStudent: (String, String, String, Uri?, List<Int>, String) -> Unit
 ) {
     var flow by remember { mutableStateOf(AuthFlow.Entry) }
+    var studentPhone by remember { mutableStateOf("") }
 
     Box(
         modifier = Modifier
@@ -104,16 +105,24 @@ fun RealAuthScreen(
                         .padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    if (flow == AuthFlow.Entry) {
-                        EntryPane(
+                    when (flow) {
+                        AuthFlow.Entry -> EntryPane(
                             loading = loading,
                             onStartLogin = onStartLoginResult,
                             onVerifyLogin = onVerifyLogin,
-                            onCompleteStudent = onCompleteStudent,
+                            onNewStudent = { phone ->
+                                studentPhone = phone
+                                flow = AuthFlow.StudentOnboarding
+                            },
                             onNewTrainer = { flow = AuthFlow.TrainerOnboarding }
                         )
-                    } else {
-                        TrainerOnboardingPane(
+                        AuthFlow.StudentOnboarding -> StudentOnboardingPane(
+                            phone = studentPhone,
+                            loading = loading,
+                            onBack = { flow = AuthFlow.Entry },
+                            onCompleteStudent = onCompleteStudent
+                        )
+                        AuthFlow.TrainerOnboarding -> TrainerOnboardingPane(
                             loading = loading,
                             onBack = { flow = AuthFlow.Entry },
                             onRegisterInstructor = onRegisterInstructor,
@@ -139,18 +148,12 @@ private fun EntryPane(
     loading: Boolean,
     onStartLogin: (String, (String, String) -> Unit) -> Unit,
     onVerifyLogin: (String, String) -> Unit,
-    onCompleteStudent: (String, String, String, Uri?, String) -> Unit,
+    onNewStudent: (String) -> Unit,
     onNewTrainer: () -> Unit
 ) {
     var identifier by remember { mutableStateOf("") }
     var accessToken by remember { mutableStateOf("") }
     var tokenRequested by remember { mutableStateOf(false) }
-    var studentFirstAccess by remember { mutableStateOf(false) }
-    var studentStep by remember { mutableIntStateOf(0) }
-    var studentEmail by remember { mutableStateOf("") }
-    var studentNickname by remember { mutableStateOf("") }
-    var studentPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    var studentToken by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Entrar", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
@@ -167,58 +170,104 @@ private fun EntryPane(
                 onVerifyLogin(identifier, accessToken)
             } else {
                 onStartLogin(identifier) { _, nextStep ->
-                    studentFirstAccess = nextStep == "student_first_access"
-                    studentStep = 0
-                    tokenRequested = nextStep != "student_first_access"
-                }
-            }
-        }
-
-        if (studentFirstAccess) {
-            Surface(color = PurpleSurface, shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (studentStep > 0) {
-                            IconButton(onClick = { studentStep -= 1 }) {
-                                Icon(Icons.Outlined.ArrowBack, "Voltar", tint = Color.White)
-                            }
-                        }
-                        Column(Modifier.weight(1f)) {
-                            Text("Primeiro acesso do aluno", color = Color.White, fontWeight = FontWeight.Bold)
-                            Text(
-                                listOf("Seu email", "Seu perfil", "Verifique o token")[studentStep],
-                                color = Lime,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                        Text("${studentStep + 1}/3", color = Lime, fontWeight = FontWeight.Bold)
-                    }
-                    Text("Telefone reconhecido pelo cadastro do professor.", color = Color.White.copy(alpha = .58f), fontSize = 12.sp)
-                    when (studentStep) {
-                        0 -> {
-                            AuthField(studentEmail, { studentEmail = it }, "Email", KeyboardType.Email, Icons.Outlined.AlternateEmail)
-                            AuthButton("Continuar", loading, studentEmail.contains("@")) { studentStep = 1 }
-                        }
-                        1 -> {
-                            AuthField(studentNickname, { studentNickname = it }, "Apelido", KeyboardType.Text, Icons.Outlined.AccountCircle)
-                            PhotoPickerRow(photoUri = studentPhotoUri, onPhotoSelected = { studentPhotoUri = it })
-                            AuthButton("Continuar", loading, studentNickname.length > 1) { studentStep = 2 }
-                        }
-                        2 -> {
-                            Text("Digite o codigo de 6 digitos que seu professor enviou. Ele vale por 24h.", color = Color.White.copy(alpha = .68f), fontSize = 13.sp)
-                            AuthField(studentToken, { studentToken = it.filter(Char::isDigit).take(6) }, "Token de 6 digitos", KeyboardType.Number, Icons.Outlined.Phone)
-                            AuthButton("Concluir e entrar", loading, studentToken.length == 6) {
-                                onCompleteStudent(identifier, studentEmail, studentNickname, studentPhotoUri, studentToken)
-                            }
-                        }
-                    }
+                    if (nextStep == "student_first_access") onNewStudent(identifier)
+                    else tokenRequested = true
                 }
             }
         }
 
         TextButton(onClick = onNewTrainer, modifier = Modifier.fillMaxWidth()) {
             Text("Novo treinador?", color = Color.White, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+private fun StudentOnboardingPane(
+    phone: String,
+    loading: Boolean,
+    onBack: () -> Unit,
+    onCompleteStudent: (String, String, String, Uri?, List<Int>, String) -> Unit
+) {
+    var step by remember { mutableIntStateOf(0) }
+    var email by remember { mutableStateOf("") }
+    var nickname by remember { mutableStateOf("") }
+    var photoUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedDays by remember { mutableStateOf(setOf<Int>()) }
+    var token by remember { mutableStateOf("") }
+    val titles = listOf("Qual é o seu e-mail?", "Monte seu perfil", "Escolha seus dias", "PIN do professor")
+
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { if (step == 0) onBack() else step -= 1 }) {
+                Icon(Icons.Outlined.ArrowBack, "Voltar", tint = Color.White)
+            }
+            Column(Modifier.weight(1f)) {
+                Text("Você é uma aluna nova", color = Lime, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text(titles[step], color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            }
+            Text("${step + 1}/4", color = Lime, fontWeight = FontWeight.Bold)
+        }
+        Text(
+            if (step == 0) "Reconhecemos o número $phone. Complete seu cadastro para acessar o treino preparado pelo seu professor."
+            else "Seu cadastro está vinculado ao número $phone.",
+            color = Color.White.copy(alpha = .62f),
+            fontSize = 12.sp
+        )
+
+        when (step) {
+            0 -> {
+                AuthField(email, { email = it }, "E-mail", KeyboardType.Email, Icons.Outlined.AlternateEmail)
+                AuthButton("Continuar", loading, email.contains("@") && email.substringAfter("@").contains(".")) { step = 1 }
+            }
+            1 -> {
+                AuthField(nickname, { nickname = it }, "Nome ou apelido", KeyboardType.Text, Icons.Outlined.AccountCircle)
+                PhotoPickerRow(photoUri = photoUri, onPhotoSelected = { photoUri = it })
+                AuthButton("Continuar", loading, nickname.trim().length > 1) { step = 2 }
+            }
+            2 -> {
+                Text("Em quais dias você pretende seguir seu treino?", color = Color.White.copy(alpha = .78f), fontSize = 13.sp)
+                WeekDaySelector(selectedDays) { day ->
+                    selectedDays = if (day in selectedDays) selectedDays - day else selectedDays + day
+                }
+                Text("Você poderá ajustar essa preferência depois.", color = Color.White.copy(alpha = .52f), fontSize = 12.sp)
+                AuthButton("Continuar", loading, selectedDays.isNotEmpty()) { step = 3 }
+            }
+            3 -> {
+                Text("Digite o PIN de 6 dígitos exibido no cadastro feito pelo seu professor. O PIN vale por 24 horas.", color = Color.White.copy(alpha = .72f), fontSize = 13.sp)
+                AuthField(token, { token = it.filter(Char::isDigit).take(6) }, "PIN de 6 dígitos", KeyboardType.Number, Icons.Outlined.Phone)
+                AuthButton("Concluir e entrar", loading, token.length == 6) {
+                    onCompleteStudent(phone, email.trim(), nickname.trim(), photoUri, selectedDays.sorted(), token)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeekDaySelector(selectedDays: Set<Int>, onToggle: (Int) -> Unit) {
+    val days = listOf(1 to "Seg", 2 to "Ter", 3 to "Qua", 4 to "Qui", 5 to "Sex", 6 to "Sáb", 7 to "Dom")
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        days.chunked(4).forEach { rowDays ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                rowDays.forEach { (value, label) ->
+                    val selected = value in selectedDays
+                    Surface(
+                        modifier = Modifier.weight(1f).clickable { onToggle(value) },
+                        color = if (selected) Lime else PurpleSurface,
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text(
+                            label,
+                            modifier = Modifier.padding(vertical = 13.dp),
+                            color = if (selected) PurpleDeep else Color.White,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+                repeat(4 - rowDays.size) { Spacer(Modifier.weight(1f)) }
+            }
         }
     }
 }
