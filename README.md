@@ -6,6 +6,8 @@
 
 Aplicativo Android para gestao de academias, personal trainers e alunos.
 
+https://canva.link/wcfmyggbkx24whl
+
 </div>
 
 ---
