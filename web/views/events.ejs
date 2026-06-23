@@ -1,0 +1,40 @@
+<%- include('partials/head', { title: 'Eventos', active: 'events' }) %>
+
+<h1 class="page-title">Eventos</h1>
+<p class="page-subtitle"><%= events.length %> evento(s)</p>
+
+<details class="section">
+  <summary class="toggle-link">+ Novo evento</summary>
+  <form class="form-card" method="post" action="/events" style="margin-top:14px">
+    <div><label>Nome</label><input name="name" required /></div>
+    <div class="form-row">
+      <div><label>Data e hora</label><input type="datetime-local" name="eventDate" required /></div>
+      <div><label>Local</label><input name="location" /></div>
+    </div>
+    <div><label>Descrição</label><textarea name="description"></textarea></div>
+    <button class="btn btn-primary" type="submit" style="align-self:flex-start">Criar evento</button>
+  </form>
+</details>
+
+<div class="section">
+  <% if (events.length === 0) { %>
+    <div class="empty-state">Nenhum evento criado ainda.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Nome</th><th>Data</th><th>Local</th><th>Presenças</th><th></th></tr></thead>
+      <tbody>
+        <% events.forEach((e) => { %>
+          <tr>
+            <td><a href="/events/<%= e.id %>"><%= e.name %></a></td>
+            <td><%= new Date(e.event_date).toLocaleString('pt-BR') %></td>
+            <td><%= e.location || '—' %></td>
+            <td><%= e.attendeeCount %></td>
+            <td><a href="/events/<%= e.id %>" class="toggle-link">Ver / editar</a></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<%- include('partials/footer') %>

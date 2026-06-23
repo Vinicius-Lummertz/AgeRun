@@ -1,0 +1,46 @@
+<%- include('partials/head', { title: event.name, active: 'events' }) %>
+
+<a class="back-link" href="/events">&larr; Voltar para eventos</a>
+<h1 class="page-title"><%= event.name %></h1>
+<p class="page-subtitle"><%= new Date(event.event_date).toLocaleString('pt-BR') %> · <%= event.location || 'Sem local' %></p>
+
+<div class="section">
+  <h2>Editar evento</h2>
+  <form class="form-card" method="post" action="/events/<%= event.id %>/edit">
+    <div><label>Nome</label><input name="name" value="<%= event.name %>" required /></div>
+    <div class="form-row">
+      <div><label>Data e hora</label><input type="datetime-local" name="eventDate" value="<%= new Date(event.event_date).toISOString().slice(0,16) %>" required /></div>
+      <div><label>Local</label><input name="location" value="<%= event.location || '' %>" /></div>
+    </div>
+    <div><label>Descrição</label><textarea name="description"><%= event.description || '' %></textarea></div>
+    <button class="btn btn-primary" type="submit" style="align-self:flex-start">Salvar alterações</button>
+  </form>
+</div>
+
+<div class="section">
+  <h2>Presenças (<%= attendees.length %>)</h2>
+  <% if (attendees.length === 0) { %>
+    <div class="empty-state">Nenhuma presença confirmada ainda.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th></th><th>Nome</th></tr></thead>
+      <tbody>
+        <% attendees.forEach((a) => { %>
+          <tr>
+            <td><img class="avatar" src="<%= a.avatarUrl %>" onerror="this.style.visibility='hidden'" /></td>
+            <td><%= a.name %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<div class="section">
+  <h2 style="color:#FF6B7A">Excluir evento</h2>
+  <form method="post" action="/events/<%= event.id %>/delete" onsubmit="return confirm('Excluir este evento definitivamente?')">
+    <button class="btn btn-danger" type="submit">Excluir evento</button>
+  </form>
+</div>
+
+<%- include('partials/footer') %>

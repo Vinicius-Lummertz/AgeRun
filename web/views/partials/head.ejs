@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= title %> · AgeGo</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="dot"></span> AgeGo</div>
+    <a class="nav-item <%= active === 'overview' ? 'active' : '' %>" href="/">Visão geral</a>
+    <a class="nav-item <%= active === 'students' ? 'active' : '' %>" href="/students">Alunos</a>
+    <a class="nav-item <%= active === 'workouts' ? 'active' : '' %>" href="/workouts">Treinos &amp; rotinas</a>
+    <a class="nav-item <%= active === 'events' ? 'active' : '' %>" href="/events">Eventos</a>
+    <a class="nav-item <%= active === 'challenges' ? 'active' : '' %>" href="/challenges">Desafios</a>
+    <a class="nav-item <%= active === 'finance' ? 'active' : '' %>" href="/finance">Financeiro</a>
+    <a class="nav-item <%= active === 'settings' ? 'active' : '' %>" href="/settings">Configurações</a>
+    <div class="spacer"></div>
+    <form class="logout-form" method="post" action="/logout">
+      <button type="submit">Sair</button>
+    </form>
+  </aside>
+  <main class="main">
+    <% if (typeof flash !== 'undefined' && flash) { %>
+      <div class="flash <%= flash.ok ? 'flash-ok' : 'flash-error' %>"><%= flash.message %></div>
+    <% } %>

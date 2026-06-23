@@ -1,0 +1,32 @@
+<%- include('partials/head', { title: 'Configurações', active: 'settings' }) %>
+
+<h1 class="page-title">Configurações</h1>
+<p class="page-subtitle">Dados do treinador</p>
+
+<div class="section">
+  <table>
+    <tr><td style="width:140px;color:rgba(255,255,255,.55)">Nome</td><td><%= profile?.name || '—' %></td></tr>
+    <tr><td style="color:rgba(255,255,255,.55)">E-mail</td><td><%= profile?.email || '—' %></td></tr>
+  </table>
+  <p style="color:rgba(255,255,255,.5);font-size:12px;margin-top:14px">
+    Para alterar nome ou foto, use o app AgeGo no celular.
+  </p>
+</div>
+
+<div class="section">
+  <h2>Financeiro &amp; notificações</h2>
+  <form class="form-card" method="post" action="/settings">
+    <div><label>Chave Pix</label><input name="pixKey" value="<%= settings.pix_key || '' %>" /></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#fff">
+      <input type="checkbox" name="notificationEmail" <%= settings.notification_email !== false ? 'checked' : '' %> style="width:auto" />
+      Notificações por e-mail
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#fff">
+      <input type="checkbox" name="notificationPush" <%= settings.notification_push !== false ? 'checked' : '' %> style="width:auto" />
+      Notificações push
+    </label>
+    <button class="btn btn-primary" type="submit" style="align-self:flex-start">Salvar configurações</button>
+  </form>
+</div>
+
+<%- include('partials/footer') %>

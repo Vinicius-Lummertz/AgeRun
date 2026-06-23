@@ -1,0 +1,68 @@
+<%- include('partials/head', { title: 'Alunos', active: 'students' }) %>
+
+<h1 class="page-title">Alunos</h1>
+<p class="page-subtitle"><%= students.length %> aluno(s)</p>
+
+<details class="section">
+  <summary class="toggle-link">+ Novo aluno</summary>
+  <form class="form-card" method="post" action="/students" style="margin-top:14px">
+    <div class="form-row">
+      <div><label>Nome</label><input name="name" required /></div>
+      <div><label>Telefone</label><input name="phone" required /></div>
+    </div>
+    <div class="form-row">
+      <div><label>E-mail (opcional)</label><input name="email" type="email" /></div>
+      <div><label>Mensalidade (R$)</label><input name="monthlyFee" /></div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>Nível</label>
+        <select name="fitnessLevel">
+          <option value="beginner">Iniciante</option>
+          <option value="intermediate">Intermediário</option>
+          <option value="advanced">Avançado</option>
+        </select>
+      </div>
+      <div>
+        <label>Status</label>
+        <select name="status">
+          <option value="active">Ativo</option>
+          <option value="pending_payment">Pendente</option>
+          <option value="inactive">Inativo</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn btn-primary" type="submit" style="margin-top:6px">Criar aluno</button>
+  </form>
+</details>
+
+<div class="section">
+  <% if (students.length === 0) { %>
+    <div class="empty-state">Nenhum aluno cadastrado ainda.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th></th><th>Nome</th><th>Plano</th><th>Pagamento</th><th></th></tr></thead>
+      <tbody>
+        <% students.forEach((s) => { %>
+          <tr>
+            <td><img class="avatar" src="<%= s.users?.avatar_url || '' %>" onerror="this.style.visibility='hidden'" /></td>
+            <td><a href="/students/<%= s.id %>"><%= s.users?.name || 'Aluno' %></a></td>
+            <td><%= s.planName %></td>
+            <td>
+              <% if (s.cycle.paymentStatus === 'paid') { %>
+                <span class="pill paid">Pago</span>
+              <% } else if (s.cycle.daysOverdue > 4) { %>
+                <span class="pill overdue"><%= s.cycle.daysOverdue %>d atraso</span>
+              <% } else { %>
+                <span class="pill pending">Pendente</span>
+              <% } %>
+            </td>
+            <td><a href="/students/<%= s.id %>" class="toggle-link">Ver / editar</a></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<%- include('partials/footer') %>

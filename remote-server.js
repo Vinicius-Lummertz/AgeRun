@@ -13,7 +13,10 @@ const requiredEnv = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   PORT: z.coerce.number().default(3333),
   APP_GATE_KEY: z.string().optional().default(''),
-  CORS_ORIGIN: z.string().optional().default('*')
+  CORS_ORIGIN: z.string().optional().default('*'),
+  ASAAS_API_KEY: z.string().optional().default(''),
+  ASAAS_BASE_URL: z.string().optional().default('https://sandbox.asaas.com/api/v3'),
+  ASAAS_WEBHOOK_TOKEN: z.string().optional().default('')
 });
 
 const env = requiredEnv.parse(process.env);
@@ -112,6 +115,14 @@ const announcementSchema = z.object({
 
 const settingsSchema = z.object({
   pixKey: z.string().trim().optional().default(''),
+  pixOwnerName: z.string().trim().optional().default(''),
+  pixDocument: z.string().trim().optional().default(''),
+  addressStreet: z.string().trim().optional().default(''),
+  addressNumber: z.string().trim().optional().default(''),
+  addressNeighborhood: z.string().trim().optional().default(''),
+  addressCity: z.string().trim().optional().default(''),
+  addressState: z.string().trim().optional().default(''),
+  addressZipCode: z.string().trim().optional().default(''),
   notificationEmail: z.boolean().optional().default(true),
   notificationPush: z.boolean().optional().default(true)
 });
@@ -193,7 +204,67 @@ const studentCompleteSchema = z.object({
   photoUrl: z.string().trim().optional().default(''),
   photoBase64: z.string().trim().optional().default(''),
   photoMimeType: z.string().trim().optional().default(''),
+  frequencyDays: z.array(z.number().int().min(1).max(7)).optional().default([]),
+  billingDay: z.number().int().min(1).max(28).optional().default(5),
   token: z.string().trim().min(4)
+});
+
+const billingDaySchema = z.object({
+  billingDay: z.number().int().min(1).max(28)
+});
+
+function isValidCpf(value = '') {
+  const cpf = String(value).replace(/\D/g, '');
+  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+  const digits = cpf.split('').map(Number);
+  for (const checkIndex of [9, 10]) {
+    let sum = 0;
+    for (let i = 0; i < checkIndex; i++) sum += digits[i] * (checkIndex + 1 - i);
+    const remainder = (sum * 10) % 11;
+    if ((remainder === 10 ? 0 : remainder) !== digits[checkIndex]) return false;
+  }
+  return true;
+}
+
+const cpfSchema = z.string().trim().min(11, 'CPF deve ter 11 digitos').refine(isValidCpf, 'CPF invalido');
+
+const asaasPixPaymentSchema = z.object({
+  cpf: cpfSchema
+});
+
+const asaasCardPaymentSchema = z.object({
+  cpf: cpfSchema,
+  postalCode: z.string().trim().regex(/^\d{8}$/, 'CEP deve ter 8 digitos'),
+  addressNumber: z.string().trim().min(1, 'Informe o numero do endereco'),
+  card: z.object({
+    holderName: z.string().trim().min(2, 'Informe o nome impresso no cartao'),
+    number: z.string().trim().regex(/^\d{13,19}$/, 'Numero do cartao invalido'),
+    expiryMonth: z.string().trim().regex(/^(0[1-9]|1[0-2])$/, 'Mes de validade invalido'),
+    expiryYear: z.string().trim().regex(/^\d{4}$/, 'Ano de validade invalido').refine((year) => {
+      const currentYear = new Date().getFullYear();
+      return Number(year) >= currentYear && Number(year) <= currentYear + 20;
+    }, 'Ano de validade invalido'),
+    ccv: z.string().trim().regex(/^\d{3,4}$/, 'CVV invalido')
+  }).refine((card) => {
+    const expiry = new Date(Number(card.expiryYear), Number(card.expiryMonth), 0, 23, 59, 59);
+    return expiry >= new Date();
+  }, { message: 'Cartao vencido', path: ['expiryMonth'] })
+});
+
+const studentInviteRegisterSchema = z.object({
+  inviteCode: z.string().trim().min(4),
+  phone: z.string().trim().min(6),
+  email: z.string().trim().email().optional().or(z.literal('')).default(''),
+  nickname: z.string().trim().min(2),
+  photoUrl: z.string().trim().optional().default(''),
+  photoBase64: z.string().trim().optional().default(''),
+  photoMimeType: z.string().trim().optional().default(''),
+  frequencyDays: z.array(z.number().int().min(1).max(7)).optional().default([]),
+  billingDay: z.number().int().min(1).max(28).optional().default(5)
+});
+
+const webPairingConfirmSchema = z.object({
+  token: z.string().trim().min(10).max(200)
 });
 
 const profileSchema = z.object({
@@ -212,6 +283,120 @@ function verificationCode() {
 
 function normalizePhone(value = '') {
   return String(value).replace(/\D/g, '');
+}
+
+function normalizeCpf(value = '') {
+  return String(value).replace(/\D/g, '');
+}
+
+function parseMonthlyFee(value = '') {
+  return Number(String(value).trim().replace(/\./g, '').replace(',', '.'));
+}
+
+/**
+ * The platform keeps 5% on top of the instructor's listed price: if the instructor charges
+ * R$100, the student is billed R$105, and the full R$100 still gets transferred to the
+ * instructor via payoutInstructor — the 5% stays in the main Asaas account automatically
+ * since only the original fee (not the marked-up charge) is ever transferred out.
+ */
+const PLATFORM_FEE_RATE = 0.05;
+
+function chargeAmountWithPlatformFee(monthlyFee) {
+  return Math.round(monthlyFee * (1 + PLATFORM_FEE_RATE) * 100) / 100;
+}
+
+class AsaasError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function asaasRequest(method, path, body) {
+  const response = await fetch(`${env.ASAAS_BASE_URL}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'access_token': env.ASAAS_API_KEY,
+      'User-Agent': 'AgeGo'
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = data?.errors?.[0]?.description || data?.message || 'Erro ao comunicar com o Asaas';
+    throw new AsaasError(message, response.status);
+  }
+  return data;
+}
+
+/** Guesses the Asaas pixAddressKeyType from the raw key format, used for the payout transfer. */
+function guessPixKeyType(pixKey = '') {
+  const digits = normalizePhone(pixKey);
+  if (pixKey.includes('@')) return 'EMAIL';
+  if (digits.length === 11 && pixKey.trim() === digits) return 'CPF';
+  if (digits.length === 14 && pixKey.trim() === digits) return 'CNPJ';
+  if (/^\+?\d{10,13}$/.test(pixKey.trim())) return 'PHONE';
+  return 'EVP';
+}
+
+async function getOrCreateAsaasCustomer(studentProfile, profile, cpf) {
+  if (studentProfile.asaas_customer_id) return studentProfile.asaas_customer_id;
+  const customer = await asaasRequest('POST', '/customers', {
+    name: profile.name,
+    email: profile.email,
+    cpfCnpj: cpf,
+    phone: profile.phone,
+    externalReference: profile.id
+  });
+  await queryOrThrow(
+    supabaseAdmin.from('student_profiles').update({ asaas_customer_id: customer.id, cpf }).eq('id', studentProfile.id)
+  );
+  return customer.id;
+}
+
+/** Pays out the instructor's share via Asaas PIX transfer, using the pix key already on file in instructor_settings. */
+async function payoutInstructor(instructorId, amount) {
+  const settings = await queryOrThrow(
+    supabaseAdmin.from('instructor_settings').select('pix_key').eq('instructor_id', instructorId).maybeSingle()
+  );
+  const pixKey = settings?.pix_key?.trim();
+  if (!pixKey) {
+    console.error(`Asaas payout skipped: instructor ${instructorId} has no pix_key configured`);
+    return;
+  }
+  await asaasRequest('POST', '/transfers', {
+    value: amount,
+    pixAddressKey: pixKey,
+    pixAddressKeyType: guessPixKeyType(pixKey),
+    operationType: 'PIX'
+  });
+}
+
+/**
+ * Marks the student's billing cycle as paid (mirrors the manual /students/:id/approve-payment
+ * flow) and triggers the instructor payout. Looked up by Asaas customer id (stable) rather than
+ * payment id, since a subscription generates a new payment id every billing cycle.
+ */
+async function confirmAsaasPayment(customerId) {
+  const studentProfile = await queryOrThrow(
+    supabaseAdmin.from('student_profiles').select('id, instructor_id, monthly_fee').eq('asaas_customer_id', customerId).maybeSingle()
+  );
+  if (!studentProfile) return;
+  await queryOrThrow(
+    supabaseAdmin.from('student_profiles').update({
+      last_payment_at: new Date().toISOString(),
+      payment_proof_url: null,
+      payment_proof_rejection_reason: null,
+      asaas_payment_id: null
+    }).eq('id', studentProfile.id)
+  );
+  const amount = parseMonthlyFee(studentProfile.monthly_fee);
+  if (amount > 0) {
+    await payoutInstructor(studentProfile.instructor_id, amount).catch((error) => {
+      console.error('Asaas payout failed', error);
+    });
+  }
 }
 
 function loginContact(value = '') {
@@ -264,22 +449,37 @@ function authResponse(session, profile) {
   };
 }
 
-function computePaymentCycle(billingDay, lastPaymentAt) {
+function computePaymentCycle(billingDay, lastPaymentAt, billingCycleStartedAt) {
   const day = Math.min(Math.max(Number(billingDay) || 5, 1), 28);
   const now = new Date();
-  let dueDate = new Date(now.getFullYear(), now.getMonth(), day);
-  if (dueDate > now) {
-    dueDate = new Date(now.getFullYear(), now.getMonth() - 1, day);
+  const cycleStart = billingCycleStartedAt ? new Date(billingCycleStartedAt) : null;
+  let dueDate;
+
+  if (cycleStart && !Number.isNaN(cycleStart.getTime())) {
+    const cycleStartDate = new Date(cycleStart.getFullYear(), cycleStart.getMonth(), cycleStart.getDate());
+    dueDate = new Date(cycleStart.getFullYear(), cycleStart.getMonth(), day);
+    if (dueDate < cycleStartDate) dueDate = new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, day);
+    while (new Date(dueDate.getFullYear(), dueDate.getMonth() + 1, day) <= now) {
+      dueDate = new Date(dueDate.getFullYear(), dueDate.getMonth() + 1, day);
+    }
+  } else {
+    dueDate = new Date(now.getFullYear(), now.getMonth(), day);
+    if (dueDate > now) dueDate = new Date(now.getFullYear(), now.getMonth() - 1, day);
   }
-  const paid = lastPaymentAt ? new Date(lastPaymentAt) >= dueDate : false;
+
+  const lastPayment = lastPaymentAt ? new Date(lastPaymentAt) : null;
+  const paid = lastPayment
+    ? lastPayment >= dueDate || (dueDate > now && cycleStart && lastPayment >= cycleStart)
+    : false;
   if (paid) return { paymentStatus: 'paid', daysOverdue: 0 };
+  if (dueDate > now) return { paymentStatus: 'pending', daysOverdue: 0 };
   const daysOverdue = Math.max(Math.floor((now.getTime() - dueDate.getTime()) / 86_400_000), 0);
   return { paymentStatus: 'pending', daysOverdue };
 }
 
 function toCamelStudent(row) {
   const email = row.email ?? '';
-  const cycle = computePaymentCycle(row.billing_day, row.last_payment_at);
+  const cycle = computePaymentCycle(row.billing_day, row.last_payment_at, row.billing_cycle_started_at);
   return {
     id: row.id,
     name: row.name,
@@ -297,7 +497,8 @@ function toCamelStudent(row) {
     paymentStatus: cycle.paymentStatus,
     daysOverdue: cycle.daysOverdue,
     paymentProofUrl: row.payment_proof_url ?? null,
-    paymentProofRejectionReason: row.payment_proof_rejection_reason ?? null
+    paymentProofRejectionReason: row.payment_proof_rejection_reason ?? null,
+    asaasSubscriptionActive: Boolean(row.asaas_subscription_id)
   };
 }
 
@@ -521,7 +722,9 @@ async function loadDashboard(instructorId) {
   ]);
 
   return {
-    students: students.map(toCamelStudent),
+    // loadStudents already returns the public/camelCase representation.
+    // Mapping it again drops fields whose source names are snake_case.
+    students,
     workouts: workouts.map(toCamelWorkout),
     announcements,
     events,
@@ -555,8 +758,10 @@ async function loadDashboardForProfile(profile) {
         billing_day,
         monthly_fee,
         last_payment_at,
+        billing_cycle_started_at,
         payment_proof_url,
         payment_proof_rejection_reason,
+        asaas_subscription_id,
         users!student_profiles_user_id_fkey(name, email, phone, avatar_url),
         student_plans(is_active, plans(name))
       `)
@@ -582,7 +787,7 @@ async function loadDashboardForProfile(profile) {
   const instructorSettingsRow = await queryOrThrow(
     supabaseAdmin
       .from('instructor_settings')
-      .select('pix_key')
+      .select('pix_key, pix_owner_name, address_city')
       .eq('instructor_id', instructorId)
       .maybeSingle()
   );
@@ -632,8 +837,10 @@ async function loadDashboardForProfile(profile) {
       billing_day: studentProfile.billing_day,
       monthly_fee: studentProfile.monthly_fee,
       last_payment_at: studentProfile.last_payment_at,
+      billing_cycle_started_at: studentProfile.billing_cycle_started_at,
       payment_proof_url: studentProfile.payment_proof_url,
-      payment_proof_rejection_reason: studentProfile.payment_proof_rejection_reason
+      payment_proof_rejection_reason: studentProfile.payment_proof_rejection_reason,
+      asaas_subscription_id: studentProfile.asaas_subscription_id
     })],
     workouts: assignedWorkouts.map(toCamelWorkout),
     announcements: announcementRows,
@@ -641,6 +848,8 @@ async function loadDashboardForProfile(profile) {
     routines: [],
     trainingNow: [],
     instructorPixKey: instructorSettingsRow?.pix_key ?? '',
+    instructorPixOwnerName: instructorSettingsRow?.pix_owner_name ?? '',
+    instructorPixCity: instructorSettingsRow?.address_city ?? '',
     instructorName: instructorUserRow?.name ?? 'Professor',
     instructorAvatarUrl: instructorUserRow?.avatar_url ?? '',
     runHistory,
@@ -659,6 +868,7 @@ async function loadStudents(instructorId) {
         billing_day,
         monthly_fee,
         last_payment_at,
+        billing_cycle_started_at,
         payment_proof_url,
         payment_proof_rejection_reason,
         users!student_profiles_user_id_fkey(name, email, phone, avatar_url),
@@ -740,6 +950,7 @@ async function loadStudents(instructorId) {
       billing_day: row.billing_day,
       monthly_fee: row.monthly_fee,
       last_payment_at: row.last_payment_at,
+      billing_cycle_started_at: row.billing_cycle_started_at,
       payment_proof_url: row.payment_proof_url,
       payment_proof_rejection_reason: row.payment_proof_rejection_reason
     });
@@ -775,6 +986,58 @@ async function loadTrainingNow(instructorId) {
 
 app.get('/health', (req, res) => {
   res.json({ ok: true, service: 'agego-api' });
+});
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
+}
+
+/**
+ * Renders the "bounce into the app" landing page shared for deep-link redirects. Messaging
+ * apps (WhatsApp, SMS) only auto-linkify http(s) URLs, not custom schemes like "agego://", so
+ * the instructor shares this https link instead and it bounces straight into the app.
+ */
+function renderDeepLinkRedirectPage(deepLink) {
+  const safeDeepLink = escapeHtml(deepLink);
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Abrir no AgeGo</title>
+<meta http-equiv="refresh" content="0; url=${safeDeepLink}" />
+<style>
+  body { background:#10071F; color:#fff; font-family:sans-serif; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; text-align:center; padding:24px; }
+  a { color:#D6FF3F; font-weight:bold; text-decoration:none; border:1px solid #D6FF3F; padding:12px 24px; border-radius:24px; display:inline-block; margin-top:16px; }
+</style>
+</head>
+<body>
+  <div>
+    <p>Abrindo o app AgeGo...</p>
+    <a href="${safeDeepLink}">Toque aqui se não abrir automaticamente</a>
+  </div>
+  <script>window.location.href = ${JSON.stringify(deepLink)};</script>
+</body>
+</html>`;
+}
+
+app.get('/student-access/:phone/:code', (req, res) => {
+  const deepLink = `agego://student-access/${encodeURIComponent(req.params.phone)}/${encodeURIComponent(req.params.code)}`;
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderDeepLinkRedirectPage(deepLink));
+});
+
+/**
+ * General instructor invite link, shared with a whole class/group at once. Unlike
+ * /student-access (tied to one pre-registered student's phone+code), this one is tied only to
+ * the instructor and lands new students on a self-service signup screen.
+ */
+app.get('/invite/:code', (req, res) => {
+  const deepLink = `agego://invite/${encodeURIComponent(req.params.code)}`;
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderDeepLinkRedirectPage(deepLink));
 });
 
 app.use('/auth', rateLimit(AUTH_RATE_LIMIT, 'auth'), requireAppGate);
@@ -1097,6 +1360,9 @@ app.post('/auth/student/complete', async (req, res, next) => {
         is_active: true
       }).eq('id', tokenRow.user_id).select('id, name, email, phone, role, avatar_url, is_active').single()
     );
+    await queryOrThrow(
+      supabaseAdmin.from('student_profiles').update({ billing_day: input.billingDay }).eq('user_id', tokenRow.user_id)
+    );
     await queryOrThrow(supabaseAdmin.from('auth_verification_tokens').update({ consumed_at: new Date().toISOString() }).eq('id', tokenRow.id));
 
     const { data, error } = await supabaseAnon.auth.signInWithPassword({
@@ -1106,6 +1372,76 @@ app.post('/auth/student/complete', async (req, res, next) => {
     if (error || !data.session) throw error;
 
     res.json(authResponse(data.session, profile));
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Self-service signup for an instructor's general group invite link (see GET /invite/:code).
+ * Unlike /auth/student/complete, there is no pre-existing student record or PIN to validate
+ * against — the student supplies their own phone and gets created + activated in one step.
+ */
+app.post('/auth/student/register-via-invite', async (req, res, next) => {
+  try {
+    const input = studentInviteRegisterSchema.parse(req.body);
+    const instructorSettings = await queryOrThrow(
+      supabaseAdmin
+        .from('instructor_settings')
+        .select('instructor_id')
+        .eq('invite_code', input.inviteCode)
+        .maybeSingle()
+    );
+    if (!instructorSettings) return res.status(404).json({ error: 'Link de convite invalido' });
+
+    const digits = normalizePhone(input.phone);
+    const existing = await queryOrThrow(
+      supabaseAdmin.from('users').select('id').eq('phone', digits).eq('role', 'student').maybeSingle()
+    );
+    if (existing) return res.status(409).json({ error: 'Esse telefone ja esta cadastrado' });
+
+    const publicEmail = input.email || '';
+    const authEmail = publicEmail || `student-${randomUUID()}@internal.agego.local`;
+    const tempPassword = randomPassword();
+    const { data: createdUser, error: createUserError } = await supabaseAdmin.auth.admin.createUser({
+      email: authEmail,
+      password: tempPassword,
+      email_confirm: true,
+      user_metadata: { name: input.nickname, role: 'student' }
+    });
+    if (createUserError || !createdUser.user) throw createUserError;
+
+    const userId = createdUser.user.id;
+    const avatarUrl = await uploadProfilePhoto(userId, input.photoBase64, input.photoMimeType) || input.photoUrl;
+
+    const profile = await queryOrThrow(
+      supabaseAdmin.from('users').upsert({
+        id: userId,
+        email: publicEmail || authEmail,
+        name: input.nickname,
+        phone: digits,
+        avatar_url: avatarUrl,
+        role: 'student',
+        is_active: true
+      }).select('id, name, email, phone, role, avatar_url, is_active').single()
+    );
+    await queryOrThrow(
+      supabaseAdmin.from('student_profiles').insert({
+        user_id: userId,
+        instructor_id: instructorSettings.instructor_id,
+        billing_day: input.billingDay,
+        status: 'active',
+        billing_cycle_started_at: new Date().toISOString()
+      })
+    );
+
+    const { data, error } = await supabaseAnon.auth.signInWithPassword({
+      email: authEmail,
+      password: tempPassword
+    });
+    if (error || !data.session) throw error;
+
+    res.status(201).json(authResponse(data.session, profile));
   } catch (error) {
     next(error);
   }
@@ -1200,6 +1536,31 @@ app.post('/workout-sessions', requireAuthenticated, async (req, res, next) => {
   }
 });
 
+function generateInviteCode() {
+  return randomUUID().replace(/-/g, '').slice(0, 10);
+}
+
+/**
+ * Returns (creating on first call) the instructor's standing group invite code, used to build
+ * the public /invite/:code link shared with a whole class at once.
+ */
+app.get('/invite-link', requireInstructor, async (req, res, next) => {
+  try {
+    const existing = await queryOrThrow(
+      supabaseAdmin.from('instructor_settings').select('invite_code').eq('instructor_id', req.instructorId).maybeSingle()
+    );
+    if (existing?.invite_code) return res.json({ inviteCode: existing.invite_code });
+
+    const inviteCode = generateInviteCode();
+    await queryOrThrow(
+      supabaseAdmin.from('instructor_settings').upsert({ instructor_id: req.instructorId, invite_code: inviteCode })
+    );
+    res.json({ inviteCode });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/students', requireInstructor, async (req, res, next) => {
   try {
     const dashboard = await loadDashboard(req.instructorId);
@@ -1247,7 +1608,8 @@ app.post('/students', requireInstructor, async (req, res, next) => {
           status: input.status,
           goal: input.routine,
           billing_day: input.billingDay,
-          monthly_fee: input.monthlyFee
+          monthly_fee: input.monthlyFee,
+          billing_cycle_started_at: new Date().toISOString()
         })
         .select()
         .single()
@@ -1274,6 +1636,7 @@ app.post('/students', requireInstructor, async (req, res, next) => {
         billing_day: student.billing_day,
         monthly_fee: student.monthly_fee,
         last_payment_at: student.last_payment_at,
+        billing_cycle_started_at: student.billing_cycle_started_at,
         payment_proof_url: student.payment_proof_url,
         payment_proof_rejection_reason: student.payment_proof_rejection_reason
       }),
@@ -1289,19 +1652,21 @@ app.put('/students/:id', requireInstructor, async (req, res, next) => {
   try {
     const input = studentSchema.partial({ email: true, password: true }).parse(req.body);
     const profile = await queryOrThrow(
-      supabaseAdmin.from('student_profiles').select('id, user_id').eq('id', req.params.id).eq('instructor_id', req.instructorId).single()
+      supabaseAdmin.from('student_profiles').select('id, user_id, goal, billing_day').eq('id', req.params.id).eq('instructor_id', req.instructorId).single()
     );
     await queryOrThrow(supabaseAdmin.from('users').update({
       name: input.name,
       phone: normalizePhone(input.phone)
     }).eq('id', profile.user_id));
+    const cycleChanged = profile.goal !== input.routine || Number(profile.billing_day) !== Number(input.billingDay);
     const student = await queryOrThrow(
       supabaseAdmin.from('student_profiles').update({
         status: input.status,
         goal: input.routine,
         fitness_level: input.fitnessLevel,
         billing_day: input.billingDay,
-        monthly_fee: input.monthlyFee
+        monthly_fee: input.monthlyFee,
+        ...(cycleChanged ? { billing_cycle_started_at: new Date().toISOString() } : {})
       }).eq('id', req.params.id).select().single()
     );
     res.json({
@@ -1316,6 +1681,7 @@ app.put('/students/:id', requireInstructor, async (req, res, next) => {
         billing_day: student.billing_day,
         monthly_fee: student.monthly_fee,
         last_payment_at: student.last_payment_at,
+        billing_cycle_started_at: student.billing_cycle_started_at,
         payment_proof_url: student.payment_proof_url,
         payment_proof_rejection_reason: student.payment_proof_rejection_reason
       })
@@ -1336,6 +1702,153 @@ app.post('/me/payment-proof', requireAuthenticated, async (req, res, next) => {
     await queryOrThrow(
       supabaseAdmin.from('student_profiles').update({ payment_proof_url: url, payment_proof_rejection_reason: null }).eq('id', studentProfile.id)
     );
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/me/payments/asaas/pix', requireAuthenticated, async (req, res, next) => {
+  try {
+    if (req.userProfile.role !== 'student') return res.status(403).json({ error: 'Apenas alunos podem pagar' });
+    const input = asaasPixPaymentSchema.parse(req.body);
+    const studentProfile = await queryOrThrow(
+      supabaseAdmin.from('student_profiles').select('id, instructor_id, monthly_fee, asaas_customer_id, asaas_payment_id, asaas_subscription_id').eq('user_id', req.actorId).maybeSingle()
+    );
+    if (!studentProfile) return res.status(403).json({ error: 'Aluno nao vinculado a professor' });
+    const monthlyFee = parseMonthlyFee(studentProfile.monthly_fee);
+    if (!(monthlyFee > 0)) return res.status(400).json({ error: 'O professor ainda nao configurou o valor da mensalidade' });
+
+    // Avoid generating a duplicate charge if the student already has one pending from a previous tap.
+    if (studentProfile.asaas_payment_id) {
+      const existing = await asaasRequest('GET', `/payments/${studentProfile.asaas_payment_id}`).catch(() => null);
+      if (existing?.status === 'PENDING' || existing?.status === 'AWAITING_RISK_ANALYSIS') {
+        const pixQrCode = await asaasRequest('GET', `/payments/${existing.id}/pixQrCode`);
+        return res.status(200).json({
+          paymentId: existing.id,
+          encodedImage: pixQrCode.encodedImage,
+          payload: pixQrCode.payload,
+          expirationDate: pixQrCode.expirationDate
+        });
+      }
+      if (existing?.status === 'CONFIRMED' || existing?.status === 'RECEIVED') {
+        await confirmAsaasPayment(studentProfile.asaas_customer_id);
+        return res.status(200).json({ paymentId: existing.id, paid: true });
+      }
+    }
+
+    const cpf = normalizeCpf(input.cpf);
+    const customerId = await getOrCreateAsaasCustomer(studentProfile, req.userProfile, cpf);
+    const payment = await asaasRequest('POST', '/payments', {
+      customer: customerId,
+      billingType: 'PIX',
+      value: chargeAmountWithPlatformFee(monthlyFee),
+      dueDate: new Date().toISOString().slice(0, 10),
+      description: 'Mensalidade AgeGo'
+    });
+    const pixQrCode = await asaasRequest('GET', `/payments/${payment.id}/pixQrCode`);
+    await queryOrThrow(
+      supabaseAdmin.from('student_profiles').update({ asaas_payment_id: payment.id }).eq('id', studentProfile.id)
+    );
+    res.status(201).json({
+      paymentId: payment.id,
+      encodedImage: pixQrCode.encodedImage,
+      payload: pixQrCode.payload,
+      expirationDate: pixQrCode.expirationDate
+    });
+  } catch (error) {
+    if (error instanceof AsaasError) return res.status(400).json({ error: error.message });
+    next(error);
+  }
+});
+
+/**
+ * Card payments are always set up as a recurring monthly subscription (the PIX option above
+ * stays one-off). Asaas auto-charges the card every cycle and fires the same webhook events.
+ */
+app.post('/me/payments/asaas/card', requireAuthenticated, async (req, res, next) => {
+  try {
+    if (req.userProfile.role !== 'student') return res.status(403).json({ error: 'Apenas alunos podem pagar' });
+    const input = asaasCardPaymentSchema.parse(req.body);
+    const studentProfile = await queryOrThrow(
+      supabaseAdmin.from('student_profiles').select('id, instructor_id, monthly_fee, asaas_customer_id, asaas_subscription_id').eq('user_id', req.actorId).maybeSingle()
+    );
+    if (!studentProfile) return res.status(403).json({ error: 'Aluno nao vinculado a professor' });
+    if (studentProfile.asaas_subscription_id) return res.status(409).json({ error: 'Voce ja tem uma assinatura ativa' });
+    const monthlyFee = parseMonthlyFee(studentProfile.monthly_fee);
+    if (!(monthlyFee > 0)) return res.status(400).json({ error: 'O professor ainda nao configurou o valor da mensalidade' });
+
+    const cpf = normalizeCpf(input.cpf);
+    const customerId = await getOrCreateAsaasCustomer(studentProfile, req.userProfile, cpf);
+    const subscription = await asaasRequest('POST', '/subscriptions', {
+      customer: customerId,
+      billingType: 'CREDIT_CARD',
+      value: chargeAmountWithPlatformFee(monthlyFee),
+      nextDueDate: new Date().toISOString().slice(0, 10),
+      cycle: 'MONTHLY',
+      description: 'Mensalidade AgeGo',
+      creditCard: {
+        holderName: input.card.holderName,
+        number: input.card.number,
+        expiryMonth: input.card.expiryMonth,
+        expiryYear: input.card.expiryYear,
+        ccv: input.card.ccv
+      },
+      creditCardHolderInfo: {
+        name: input.card.holderName,
+        email: req.userProfile.email,
+        cpfCnpj: cpf,
+        postalCode: input.postalCode,
+        addressNumber: input.addressNumber,
+        phone: req.userProfile.phone
+      }
+    });
+    await queryOrThrow(
+      supabaseAdmin.from('student_profiles').update({ asaas_subscription_id: subscription.id }).eq('id', studentProfile.id)
+    );
+
+    const firstPaymentStatus = subscription.status === 'ACTIVE'
+      ? (await asaasRequest('GET', `/payments?subscription=${subscription.id}&limit=1`))?.data?.[0]?.status
+      : subscription.status;
+    if (firstPaymentStatus === 'CONFIRMED' || firstPaymentStatus === 'RECEIVED') {
+      await confirmAsaasPayment(customerId);
+    }
+    res.status(201).json({ subscriptionId: subscription.id, status: firstPaymentStatus || subscription.status });
+  } catch (error) {
+    if (error instanceof AsaasError) return res.status(400).json({ error: error.message });
+    next(error);
+  }
+});
+
+app.post('/me/payments/asaas/subscription/cancel', requireAuthenticated, async (req, res, next) => {
+  try {
+    if (req.userProfile.role !== 'student') return res.status(403).json({ error: 'Apenas alunos podem cancelar' });
+    const studentProfile = await queryOrThrow(
+      supabaseAdmin.from('student_profiles').select('id, asaas_subscription_id').eq('user_id', req.actorId).maybeSingle()
+    );
+    if (!studentProfile?.asaas_subscription_id) return res.status(404).json({ error: 'Nenhuma assinatura ativa' });
+    await asaasRequest('DELETE', `/subscriptions/${studentProfile.asaas_subscription_id}`);
+    await queryOrThrow(
+      supabaseAdmin.from('student_profiles').update({ asaas_subscription_id: null }).eq('id', studentProfile.id)
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof AsaasError) return res.status(400).json({ error: error.message });
+    next(error);
+  }
+});
+
+/** Public Asaas webhook — confirms the student's payment and triggers the instructor PIX payout. */
+app.post('/payments/asaas/webhook', async (req, res, next) => {
+  try {
+    if (env.ASAAS_WEBHOOK_TOKEN && req.headers['asaas-access-token'] !== env.ASAAS_WEBHOOK_TOKEN) {
+      return res.status(401).json({ error: 'Token de webhook invalido' });
+    }
+    const event = req.body?.event;
+    const customerId = req.body?.payment?.customer;
+    if ((event === 'PAYMENT_CONFIRMED' || event === 'PAYMENT_RECEIVED') && customerId) {
+      await confirmAsaasPayment(customerId);
+    }
     res.json({ ok: true });
   } catch (error) {
     next(error);
@@ -1759,18 +2272,69 @@ app.put('/me', requireAuthenticated, async (req, res, next) => {
   }
 });
 
+app.put('/me/billing-day', requireAuthenticated, async (req, res, next) => {
+  try {
+    if (req.userProfile.role !== 'student') return res.status(403).json({ error: 'Apenas alunos podem definir o dia de pagamento' });
+    const input = billingDaySchema.parse(req.body);
+    const profile = await queryOrThrow(
+      supabaseAdmin
+        .from('student_profiles')
+        .update({ billing_day: input.billingDay })
+        .eq('user_id', req.actorId)
+        .select('id, billing_day')
+        .single()
+    );
+    res.json({ ok: true, billingDay: profile.billing_day });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/web-pairing/confirm', requireInstructor, async (req, res, next) => {
+  try {
+    const input = webPairingConfirmSchema.parse(req.body);
+    const row = await queryOrThrow(
+      supabaseAdmin
+        .from('web_pairing_tokens')
+        .select('token, expires_at, approved_at')
+        .eq('token', input.token)
+        .maybeSingle()
+    );
+    if (!row || row.approved_at || new Date(row.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'QR Code invalido ou expirado. Gere um novo no site.' });
+    }
+    await queryOrThrow(
+      supabaseAdmin
+        .from('web_pairing_tokens')
+        .update({ instructor_id: req.instructorId, approved_at: new Date().toISOString() })
+        .eq('token', input.token)
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get('/settings', requireInstructor, async (req, res, next) => {
   try {
     const row = await queryOrThrow(
       supabaseAdmin
         .from('instructor_settings')
-        .select('pix_key, notification_email, notification_push')
+        .select('pix_key, pix_owner_name, pix_document, address_street, address_number, address_neighborhood, address_city, address_state, address_zip_code, notification_email, notification_push')
         .eq('instructor_id', req.instructorId)
         .maybeSingle()
     );
     res.json({
       settings: {
         pixKey: row?.pix_key ?? '',
+        pixOwnerName: row?.pix_owner_name ?? '',
+        pixDocument: row?.pix_document ?? '',
+        addressStreet: row?.address_street ?? '',
+        addressNumber: row?.address_number ?? '',
+        addressNeighborhood: row?.address_neighborhood ?? '',
+        addressCity: row?.address_city ?? '',
+        addressState: row?.address_state ?? '',
+        addressZipCode: row?.address_zip_code ?? '',
         notificationEmail: row?.notification_email ?? true,
         notificationPush: row?.notification_push ?? true
       }
@@ -1789,6 +2353,14 @@ app.put('/settings', requireInstructor, async (req, res, next) => {
         .upsert({
           instructor_id: req.instructorId,
           pix_key: input.pixKey,
+          pix_owner_name: input.pixOwnerName,
+          pix_document: input.pixDocument,
+          address_street: input.addressStreet,
+          address_number: input.addressNumber,
+          address_neighborhood: input.addressNeighborhood,
+          address_city: input.addressCity,
+          address_state: input.addressState,
+          address_zip_code: input.addressZipCode,
           notification_email: input.notificationEmail,
           notification_push: input.notificationPush,
           updated_at: new Date().toISOString()
@@ -1799,6 +2371,14 @@ app.put('/settings', requireInstructor, async (req, res, next) => {
     res.json({
       settings: {
         pixKey: row.pix_key ?? '',
+        pixOwnerName: row.pix_owner_name ?? '',
+        pixDocument: row.pix_document ?? '',
+        addressStreet: row.address_street ?? '',
+        addressNumber: row.address_number ?? '',
+        addressNeighborhood: row.address_neighborhood ?? '',
+        addressCity: row.address_city ?? '',
+        addressState: row.address_state ?? '',
+        addressZipCode: row.address_zip_code ?? '',
         notificationEmail: row.notification_email ?? true,
         notificationPush: row.notification_push ?? true
       }
@@ -1850,15 +2430,20 @@ app.post('/upload-media', requireAuthenticated, async (req, res, next) => {
   try {
     const { base64, mimeType } = req.body;
     if (!base64 || !mimeType) return res.status(400).json({ error: 'base64 and mimeType required' });
-    if (!String(mimeType).startsWith('image/')) return res.status(400).json({ error: 'Only images are supported' });
+    const normalizedMimeType = String(mimeType).toLowerCase();
+    const supported = normalizedMimeType.startsWith('image/') || normalizedMimeType === 'application/pdf';
+    if (!supported) return res.status(400).json({ error: 'Envie uma imagem ou um arquivo PDF' });
 
     const buffer = Buffer.from(base64, 'base64');
-    const ext = (mimeType.split('/')[1] || 'jpg').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
+    if (buffer.length > 6 * 1024 * 1024) return res.status(413).json({ error: 'O arquivo deve ter no máximo 6 MB' });
+    const ext = normalizedMimeType === 'application/pdf'
+      ? 'pdf'
+      : (normalizedMimeType.split('/')[1] || 'jpg').replace('jpeg', 'jpg').replace('svg+xml', 'svg');
     const fileName = `${req.actorId}/${randomUUID()}.${ext}`;
 
     const { error: uploadError } = await supabaseAdmin.storage
       .from(SOCIAL_POSTS_BUCKET)
-      .upload(fileName, buffer, { contentType: mimeType, upsert: false });
+      .upload(fileName, buffer, { contentType: normalizedMimeType, upsert: false });
 
     if (uploadError) throw uploadError;
 
@@ -1878,7 +2463,7 @@ app.use((err, req, res, next) => {
     : (err.statusCode || err.status || (err.code === '23505' ? 409 : 500));
   const code = err.code || (err instanceof z.ZodError ? 'invalid_payload' : 'server_error');
   const message = err instanceof z.ZodError
-    ? 'Payload invalido'
+    ? (err.issues.map((issue) => issue.message).filter(Boolean).join(', ') || 'Dados invalidos')
     : (err.message || 'Erro inesperado');
   console.error({
     requestId: req.requestId,
@@ -1932,7 +2517,7 @@ async function ensureStorageBucket() {
   const bucketOptions = {
     public: true,
     fileSizeLimit: 52428800,
-    allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+    allowedMimeTypes: ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'application/pdf']
   };
 
   for (const bucketName of [SOCIAL_POSTS_BUCKET, PROFILE_PHOTOS_BUCKET]) {

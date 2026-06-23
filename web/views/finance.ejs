@@ -1,0 +1,85 @@
+<%- include('partials/head', { title: 'Financeiro', active: 'finance' }) %>
+
+<h1 class="page-title">Financeiro</h1>
+<p class="page-subtitle">Chave Pix: <%= pixKey || 'não configurada' %></p>
+
+<div class="section">
+  <h2>Status de pagamento por aluno</h2>
+  <% if (students.length === 0) { %>
+    <div class="empty-state">Nenhum aluno cadastrado ainda.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Aluno</th><th>Mensalidade</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        <% students.forEach((s) => { %>
+          <tr>
+            <td><a href="/students/<%= s.id %>"><%= s.users?.name || 'Aluno' %></a></td>
+            <td>R$ <%= s.monthly_fee || '—' %></td>
+            <td>
+              <% if (s.cycle.paymentStatus === 'paid') { %>
+                <span class="pill paid">Pago</span>
+              <% } else if (s.cycle.daysOverdue > 4) { %>
+                <span class="pill overdue"><%= s.cycle.daysOverdue %>d atraso</span>
+              <% } else { %>
+                <span class="pill pending">Pendente</span>
+              <% } %>
+            </td>
+            <td>
+              <% if (s.cycle.paymentStatus !== 'paid') { %>
+                <form method="post" action="/students/<%= s.id %>/approve-payment">
+                  <input type="hidden" name="redirectTo" value="/finance" />
+                  <button class="btn btn-primary" type="submit">Marcar pago</button>
+                </form>
+              <% } %>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<div class="section">
+  <h2>Nova cobrança</h2>
+  <form class="form-card" method="post" action="/finance/charges">
+    <div class="form-row">
+      <div>
+        <label>Aluno</label>
+        <select name="studentId" required>
+          <% students.forEach((s) => { %>
+            <option value="<%= s.id %>"><%= s.users?.name || 'Aluno' %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div><label>Valor (R$)</label><input name="amount" type="number" step="0.01" required /></div>
+    </div>
+    <div class="form-row">
+      <div><label>Descrição</label><input name="description" placeholder="Mensalidade" /></div>
+      <div><label>Vencimento</label><input type="date" name="dueDate" required /></div>
+    </div>
+    <button class="btn btn-primary" type="submit" style="align-self:flex-start">Criar cobrança</button>
+  </form>
+</div>
+
+<div class="section">
+  <h2>Cobranças recentes</h2>
+  <% if (charges.length === 0) { %>
+    <div class="empty-state">Nenhuma cobrança registrada ainda.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Descrição</th><th>Valor</th><th>Vencimento</th><th>Status</th></tr></thead>
+      <tbody>
+        <% charges.forEach((c) => { %>
+          <tr>
+            <td><%= c.description %></td>
+            <td>R$ <%= c.amount %></td>
+            <td><%= c.due_date ? new Date(c.due_date).toLocaleDateString('pt-BR') : '—' %></td>
+            <td><%= c.status %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<%- include('partials/footer') %>

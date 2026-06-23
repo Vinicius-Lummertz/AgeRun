@@ -7,7 +7,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.net.Uri
+import androidx.exifinterface.media.ExifInterface
 import android.os.Build
 import android.content.pm.PackageManager
 import android.util.Base64
@@ -32,7 +34,10 @@ interface AgeGoRepository {
     suspend fun registerInstructor(name: String, email: String, phone: String): VerificationResult
     suspend fun verifyInstructor(contentResolver: ContentResolver, email: String, token: String, displayName: String, photoUri: Uri?): AuthSession
     suspend fun startStudentFirstAccess(phone: String): VerificationResult
-    suspend fun completeStudentFirstAccess(contentResolver: ContentResolver, phone: String, email: String, nickname: String, photoUri: Uri?, frequencyDays: List<Int>, token: String): AuthSession
+    suspend fun completeStudentFirstAccess(contentResolver: ContentResolver, phone: String, email: String, nickname: String, photoUri: Uri?, frequencyDays: List<Int>, billingDay: Int, token: String): AuthSession
+    suspend fun getInviteLink(): String
+    suspend fun registerStudentViaInvite(contentResolver: ContentResolver, inviteCode: String, phone: String, email: String, nickname: String, photoUri: Uri?, frequencyDays: List<Int>, billingDay: Int): AuthSession
+    suspend fun updateBillingDay(billingDay: Int)
     suspend fun saveProfile(contentResolver: ContentResolver, name: String, photoUri: Uri?): AuthSession
     suspend fun loadSettings(): InstructorSettings
     suspend fun saveSettings(settings: InstructorSettings): InstructorSettings
@@ -59,6 +64,10 @@ interface AgeGoRepository {
     suspend fun rejectPayment(studentId: String, reason: String)
     suspend fun saveChallenge(challengeId: String, name: String, description: String, targetType: String, targetValue: Double): List<Challenge>
     suspend fun deleteChallenge(challengeId: String)
+    suspend fun confirmWebPairing(token: String)
+    suspend fun payMonthlyFeeWithPix(cpf: String): AsaasPixResult
+    suspend fun subscribeMonthlyFeeWithCard(cpf: String, postalCode: String, addressNumber: String, card: AsaasCardInput): AsaasSubscriptionResult
+    suspend fun cancelCardSubscription()
 }
 
 @Serializable
@@ -88,13 +97,20 @@ class AuthRequiredException(message: String) : IllegalStateException(message)
 private data class ApiErrorResponse(
     val error: String = "",
     val message: String = "",
-    val details: String = "",
     val requestId: String = ""
 )
 
 @Serializable
 data class InstructorSettings(
     val pixKey: String = "",
+    val pixOwnerName: String = "",
+    val pixDocument: String = "",
+    val addressStreet: String = "",
+    val addressNumber: String = "",
+    val addressNeighborhood: String = "",
+    val addressCity: String = "",
+    val addressState: String = "",
+    val addressZipCode: String = "",
     val notificationEmail: Boolean = true,
     val notificationPush: Boolean = true
 )
@@ -134,8 +150,64 @@ private data class StudentCompletePayload(
     val photoBase64: String = "",
     val photoMimeType: String = "",
     val frequencyDays: List<Int> = emptyList(),
+    val billingDay: Int = 5,
     val token: String
 )
+
+@Serializable
+private data class InviteLinkResponse(val inviteCode: String = "")
+
+@Serializable
+private data class StudentInviteRegisterPayload(
+    val inviteCode: String,
+    val phone: String,
+    val email: String,
+    val nickname: String,
+    val photoBase64: String = "",
+    val photoMimeType: String = "",
+    val frequencyDays: List<Int> = emptyList(),
+    val billingDay: Int = 5
+)
+
+@Serializable
+data class AsaasCardInput(
+    val holderName: String,
+    val number: String,
+    val expiryMonth: String,
+    val expiryYear: String,
+    val ccv: String
+)
+
+@Serializable
+private data class AsaasPixPaymentPayload(val cpf: String)
+
+@Serializable
+data class AsaasPixResult(
+    val paymentId: String = "",
+    val encodedImage: String = "",
+    val payload: String = "",
+    val expirationDate: String = ""
+)
+
+@Serializable
+private data class AsaasCardPaymentPayload(
+    val cpf: String,
+    val postalCode: String,
+    val addressNumber: String,
+    val card: AsaasCardInput
+)
+
+@Serializable
+data class AsaasSubscriptionResult(
+    val subscriptionId: String = "",
+    val status: String = ""
+)
+
+@Serializable
+private data class BillingDayPayload(val billingDay: Int)
+
+@Serializable
+private data class WebPairingPayload(val token: String)
 
 @Serializable
 private data class ProfilePayload(
@@ -252,16 +324,56 @@ class ApiAgeGoRepository(
         nickname: String,
         photoUri: Uri?,
         frequencyDays: List<Int>,
+        billingDay: Int,
         token: String
     ): AuthSession {
         val photo = photoUri?.let { preparePhotoPayload(contentResolver, it) }
         val session: AuthSession = request(
             "POST",
             "/auth/student/complete",
-            StudentCompletePayload(phone, email, nickname, photo?.base64.orEmpty(), photo?.mimeType.orEmpty(), frequencyDays, token)
+            StudentCompletePayload(phone, email, nickname, photo?.base64.orEmpty(), photo?.mimeType.orEmpty(), frequencyDays, billingDay, token)
         )
         saveSession(session)
         return session
+    }
+
+    override suspend fun getInviteLink(): String {
+        val response: InviteLinkResponse = request("GET", "/invite-link")
+        return response.inviteCode
+    }
+
+    override suspend fun registerStudentViaInvite(
+        contentResolver: ContentResolver,
+        inviteCode: String,
+        phone: String,
+        email: String,
+        nickname: String,
+        photoUri: Uri?,
+        frequencyDays: List<Int>,
+        billingDay: Int
+    ): AuthSession {
+        val photo = photoUri?.let { preparePhotoPayload(contentResolver, it) }
+        val session: AuthSession = request(
+            "POST",
+            "/auth/student/register-via-invite",
+            StudentInviteRegisterPayload(inviteCode, phone, email, nickname, photo?.base64.orEmpty(), photo?.mimeType.orEmpty(), frequencyDays, billingDay)
+        )
+        saveSession(session)
+        return session
+    }
+
+    override suspend fun payMonthlyFeeWithPix(cpf: String): AsaasPixResult =
+        request("POST", "/me/payments/asaas/pix", AsaasPixPaymentPayload(cpf))
+
+    override suspend fun subscribeMonthlyFeeWithCard(cpf: String, postalCode: String, addressNumber: String, card: AsaasCardInput): AsaasSubscriptionResult =
+        request("POST", "/me/payments/asaas/card", AsaasCardPaymentPayload(cpf, postalCode, addressNumber, card))
+
+    override suspend fun cancelCardSubscription() {
+        requestUnit("POST", "/me/payments/asaas/subscription/cancel")
+    }
+
+    override suspend fun updateBillingDay(billingDay: Int) {
+        requestUnit("PUT", "/me/billing-day", BillingDayPayload(billingDay))
     }
 
     override suspend fun saveProfile(contentResolver: ContentResolver, name: String, photoUri: Uri?): AuthSession {
@@ -455,6 +567,10 @@ class ApiAgeGoRepository(
         requestUnit("DELETE", "/challenges/$challengeId")
     }
 
+    override suspend fun confirmWebPairing(token: String) {
+        requestUnit("POST", "/web-pairing/confirm", WebPairingPayload(token))
+    }
+
     private suspend fun preparePhotoPayload(contentResolver: ContentResolver, uri: Uri): UploadMediaPayload =
         withContext(Dispatchers.IO) {
             val originalBytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -567,9 +683,7 @@ class ApiAgeGoRepository(
         if (text.isBlank()) return ""
         return runCatching {
             val error = json.decodeFromString<ApiErrorResponse>(text)
-            listOf(error.error, error.message, error.details, error.requestId.takeIf { it.isNotBlank() }?.let { "ID $it" }.orEmpty())
-                .filter { it.isNotBlank() }
-                .joinToString(" - ")
+            listOf(error.error, error.message).filter { it.isNotBlank() }.distinct().joinToString(" - ")
         }.getOrElse { text }
     }
 }
@@ -660,7 +774,21 @@ private fun prepareImageUpload(bytes: ByteArray, mimeType: String): Pair<ByteArr
     }
 
     val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return bytes to mimeType
+    val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: return bytes to mimeType
+    val rotationDegrees = runCatching {
+        ExifInterface(bytes.inputStream()).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+    }.getOrDefault(ExifInterface.ORIENTATION_NORMAL).let {
+        when (it) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+            ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+            ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+            else -> 0f
+        }
+    }
+    val bitmap = if (rotationDegrees != 0f) {
+        val matrix = Matrix().apply { postRotate(rotationDegrees) }
+        Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also { decoded.recycle() }
+    } else decoded
     return try {
         ByteArrayOutputStream().use { output ->
             bitmap.compress(Bitmap.CompressFormat.JPEG, 86, output)

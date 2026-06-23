@@ -15,7 +15,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -51,12 +50,15 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.DirectionsRun
 import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.QrCode2
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.ViewWeek
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -65,15 +67,21 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -89,7 +97,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -102,9 +114,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
+import com.example.myapplication.data.AsaasCardInput
+import com.example.myapplication.data.AsaasPixResult
+import com.example.myapplication.data.AsaasSubscriptionResult
 import com.example.myapplication.data.Challenge
 import com.example.myapplication.data.DirectoryItem
 import com.example.myapplication.data.Event
+import com.example.myapplication.data.InstructorSettings
 import com.example.myapplication.data.RunHistoryEntry
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.Workout
@@ -135,7 +151,11 @@ fun StudentPortalApp(
     onSaveWorkoutSession: (WorkoutSessionPayload, () -> Unit) -> Unit,
     onRefresh: () -> Unit,
     onUploadMedia: suspend (Uri) -> String,
-    onSubmitPaymentProof: (String) -> Unit = {},
+    onSubmitPaymentProof: suspend (String) -> Unit = {},
+    onUpdateBillingDay: (Int) -> Unit = {},
+    onPayPix: suspend (cpf: String) -> AsaasPixResult? = { null },
+    onSubscribeCard: suspend (cpf: String, postalCode: String, addressNumber: String, card: AsaasCardInput) -> AsaasSubscriptionResult? = { _, _, _, _ -> null },
+    onCancelSubscription: () -> Unit = {},
     onLogout: () -> Unit,
     onClearMessage: () -> Unit = {}
 ) {
@@ -143,7 +163,9 @@ fun StudentPortalApp(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val currentStudent = state.students.firstOrNull()
-    val paymentBlocked = currentStudent?.paymentStatus == "pending" && currentStudent.daysOverdue > 4
+    val paymentPending = currentStudent?.paymentStatus == "pending"
+    val paymentBlocked = paymentPending && (currentStudent?.daysOverdue ?: 0) > 4
+    var paymentAlertDismissed by rememberSaveable(currentStudent?.id, currentStudent?.paymentStatus) { mutableStateOf(false) }
     fun runIfPaymentAllowed(action: () -> Unit) {
         if (paymentBlocked) {
             scope.launch {
@@ -164,6 +186,12 @@ fun StudentPortalApp(
     LaunchedEffect(initialEventId) {
         if (!initialEventId.isNullOrBlank()) currentRoute = "student_event:$initialEventId"
     }
+    // Mantem um fix de localizacao "morno" enquanto o aluno navega no app, para o mapa do treino
+    // abrir ja centralizado em vez de esperar o primeiro ponto de GPS da corrida.
+    DisposableEffect(Unit) {
+        LiveLocationCache.start(context)
+        onDispose { LiveLocationCache.stop() }
+    }
     var selectedRoutineId by rememberSaveable { mutableStateOf<String?>(null) }
     val assignedWorkoutRef = state.students.firstOrNull()?.routine.orEmpty()
     val selectedWorkout = state.workouts.firstOrNull { it.id == selectedRoutineId }
@@ -181,6 +209,8 @@ fun StudentPortalApp(
     var showScheduleDialog by rememberSaveable { mutableStateOf(selectedRoutine != null && scheduledDates.isEmpty()) }
     var showPix by remember { mutableStateOf(false) }
     var showRunChooser by rememberSaveable { mutableStateOf(false) }
+    var runChooserInitialPlano by rememberSaveable { mutableStateOf(true) }
+    var autoStartWorkout by rememberSaveable { mutableStateOf(false) }
     var freeRun by rememberSaveable { mutableStateOf(false) }
     val showBottomBar = studentDestinations.any { it.route == currentRoute }
     var bottomBarCollapsed by remember { mutableStateOf(false) }
@@ -215,9 +245,11 @@ fun StudentPortalApp(
                 announcements = state.announcements,
                 student = currentStudent,
                 paymentBlocked = paymentBlocked,
+                isRefreshing = state.isLoading,
+                onRefresh = onRefresh,
                 onSettingsClick = { currentRoute = "perfil" },
                 onPaymentClick = { currentRoute = "financeiro" },
-                onStart = { runIfPaymentAllowed { freeRun = false; currentRoute = "workout_player" } },
+                onStart = { runIfPaymentAllowed { runChooserInitialPlano = true; showRunChooser = true } },
                 onStartChallenge = { challenge -> runIfPaymentAllowed { currentRoute = "challenge_run:${challenge.id}" } }
             )
             currentRoute == "workout_player" -> StudentWorkoutPlayerScreen(
@@ -226,6 +258,7 @@ fun StudentPortalApp(
                 cycleStep = completedCycleSteps + 1,
                 workouts = state.workouts,
                 freeRun = freeRun,
+                autoStart = autoStartWorkout,
                 onBack = { currentRoute = "hub_fit" },
                 onComplete = { payload ->
                     onSaveWorkoutSession(payload) {
@@ -247,20 +280,22 @@ fun StudentPortalApp(
                 onBack = { currentRoute = "hub_fit" }
             )
             currentRoute == "financeiro" && showPix -> PixPaymentScreen(
-                pixKey = pixKey,
-                amount = selectedRoutine?.description?.let { extractRoutinePrice(it) }.orEmpty(),
+                amount = currentStudent?.monthlyFee.orEmpty().ifBlank {
+                    selectedRoutine?.description?.let { extractRoutinePrice(it) }.orEmpty()
+                },
                 student = state.students.firstOrNull(),
                 onBack = { showPix = false },
-                onUploadProof = { uri ->
-                    val url = onUploadMedia(uri)
-                    onSubmitPaymentProof(url)
-                }
+                onPayPix = onPayPix,
+                onCheckStatus = onRefresh,
+                onSubscribeCard = onSubscribeCard,
+                onCancelSubscription = onCancelSubscription
             )
             currentRoute == "financeiro" -> StudentFinanceScreen(
                 routine = selectedRoutine,
                 pixKey = pixKey,
                 student = state.students.firstOrNull(),
                 onPay = { showPix = true },
+                onBillingDayChange = onUpdateBillingDay,
                 onBack = { currentRoute = "settings" }
             )
             currentRoute == "eventos" -> StudentEventsScreen(events = state.events) { currentRoute = "student_event:${it.id}" }
@@ -321,6 +356,8 @@ fun StudentPortalApp(
                     } else {
                         "Meta: ${challenge?.targetValue?.cleanNumber()} min"
                     },
+                    targetType = challenge?.targetType,
+                    targetValue = challenge?.targetValue ?: 0.0,
                     onBack = { currentRoute = "hub_fit" },
                     onComplete = { payload ->
                         onSaveWorkoutSession(payload.copy(challengeId = challengeId, routineName = "Desafio: ${challenge?.name.orEmpty()}")) {
@@ -334,15 +371,24 @@ fun StudentPortalApp(
                 studentName = state.authSession?.name.orEmpty(),
                 avatarUrl = state.authSession?.avatarUrl.orEmpty(),
                 runHistory = state.runHistory,
+                paymentAlert = paymentBlocked,
                 onBack = { currentRoute = "hub_fit" },
                 onSettingsClick = { currentRoute = "settings" },
-                onSelectRun = { currentRoute = "run_detail:${it.id}" }
+                onSelectRun = { currentRoute = "run_detail:${it.id}:perfil" },
+                onOpenHistory = { currentRoute = "run_history" }
+            )
+            currentRoute == "run_history" -> RunHistoryListScreen(
+                runHistory = state.runHistory,
+                onBack = { currentRoute = "perfil" },
+                onSelectRun = { currentRoute = "run_detail:${it.id}:run_history" }
             )
             currentRoute.startsWith("run_detail:") -> {
-                val runId = currentRoute.substringAfter(":")
+                val parts = currentRoute.substringAfter(":").split(":")
+                val runId = parts.getOrElse(0) { "" }
+                val backRoute = parts.getOrElse(1) { "perfil" }
                 val run = state.runHistory.firstOrNull { it.id == runId }
                 if (run != null) {
-                    RunDetailScreen(run = run, onBack = { currentRoute = "perfil" })
+                    RunDetailScreen(run = run, onBack = { currentRoute = backRoute })
                 } else EmptyDetailState("Corrida não encontrada.")
             }
             currentRoute == "settings" -> StudentSettingsScreen(
@@ -350,6 +396,7 @@ fun StudentPortalApp(
                 profileAvatarUrl = state.authSession?.avatarUrl.orEmpty(),
                 onProfileSave = onProfileSave,
                 onBack = { currentRoute = "perfil" },
+                paymentAlert = paymentBlocked,
                 onOpenFinanceiro = { currentRoute = "financeiro" },
                 onLogout = onLogout
             )
@@ -371,30 +418,47 @@ fun StudentPortalApp(
                         showPix = false
                         currentRoute = it
                     },
-                    onPlay = { runIfPaymentAllowed { showRunChooser = true } },
                     items = studentDestinations
                 )
             }
         }
 
         if (showRunChooser) {
-            RunChooserDialog(
+            RunStartSheet(
                 hasRoutine = selectedRoutine != null && currentRoutineDay != null,
+                routine = selectedRoutine,
+                day = currentRoutineDay,
+                workouts = state.workouts,
+                initialPlano = runChooserInitialPlano,
                 onDismiss = { showRunChooser = false },
-                onFreeRun = {
+                onStartFree = {
                     freeRun = true
+                    autoStartWorkout = false
                     showRunChooser = false
                     currentRoute = "workout_player"
                 },
-                onRoutineRun = {
+                onStartRoutine = {
                     freeRun = false
+                    autoStartWorkout = true
                     showRunChooser = false
                     currentRoute = "workout_player"
                 }
             )
         }
 
-        if (showScheduleDialog && selectedRoutine != null) {
+        if (paymentPending && !paymentAlertDismissed) {
+            PaymentOverdueDialog(
+                amount = currentStudent?.monthlyFee.orEmpty(),
+                daysOverdue = currentStudent?.daysOverdue ?: 0,
+                blocked = paymentBlocked,
+                onDismiss = { paymentAlertDismissed = true },
+                onGoToPayment = {
+                    paymentAlertDismissed = true
+                    currentRoute = "financeiro"
+                    showPix = true
+                }
+            )
+        } else if (showScheduleDialog && selectedRoutine != null) {
             WeekScheduleDialog(
                 routineName = selectedRoutine?.name.orEmpty(),
                 routineDescription = selectedRoutine?.description.orEmpty(),
@@ -409,32 +473,149 @@ fun StudentPortalApp(
 }
 
 @Composable
-fun RunChooserDialog(
-    hasRoutine: Boolean,
-    onDismiss: () -> Unit,
-    onFreeRun: () -> Unit,
-    onRoutineRun: () -> Unit
-) {
+fun PaymentOverdueDialog(amount: String, daysOverdue: Int, blocked: Boolean, onDismiss: () -> Unit, onGoToPayment: () -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(color = PurpleDeep, shape = RoundedCornerShape(24.dp)) {
-            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Como voce quer correr?", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                Text("Escolha liberdade total ou siga os dias preparados pelo professor.", color = Color.White.copy(alpha = .65f), fontSize = 13.sp)
+            Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                PaymentWarningBadge(modifier = Modifier.size(46.dp), fontSize = 28.sp)
+                Spacer(Modifier.height(14.dp))
+                Text("Pagamento pendente", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    formatMoneyLabel(amount),
+                    color = Lime,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Text(
+                    if (blocked) {
+                        "Sua mensalidade está $daysOverdue dias atrasada. Regularize o pagamento para liberar os treinos."
+                    } else if (daysOverdue > 0) {
+                        "Sua mensalidade está $daysOverdue dias atrasada."
+                    } else {
+                        "Essa é a mensalidade do seu plano atual, definida pelo seu professor."
+                    },
+                    color = Color.White.copy(alpha = .72f),
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 18.dp)
+                )
                 Button(
-                    onClick = onFreeRun,
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                    onClick = onGoToPayment,
+                    modifier = Modifier.fillMaxWidth().height(50.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (blocked) Color(0xFFFF4D5E) else Lime, contentColor = if (blocked) Color.White else PurpleDeep),
                     shape = RoundedCornerShape(50)
-                ) { Text("Corrida livre", fontWeight = FontWeight.Bold) }
-                Button(
-                    onClick = onRoutineRun,
-                    enabled = hasRoutine,
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = PurpleSurface, contentColor = Color.White),
-                    shape = RoundedCornerShape(50)
-                ) { Text(if (hasRoutine) "Play no plano" else "Nenhum plano para hoje", fontWeight = FontWeight.Bold) }
-                TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Agora nao", color = Color.White.copy(alpha = .7f)) }
+                ) { Text("Ir para pagamento", fontWeight = FontWeight.Bold) }
+                TextButton(onClick = onDismiss) { Text("Agora não", color = Color.White.copy(alpha = .68f)) }
             }
+        }
+    }
+}
+
+@Composable
+fun PaymentWarningBadge(modifier: Modifier = Modifier.size(20.dp), fontSize: androidx.compose.ui.unit.TextUnit = 13.sp) {
+    Box(modifier.clip(CircleShape).background(Color(0xFFFF3347)), contentAlignment = Alignment.Center) {
+        Text("!", color = Color.White, fontSize = fontSize, fontWeight = FontWeight.Black)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RunStartSheet(
+    hasRoutine: Boolean,
+    routine: DirectoryItem?,
+    day: StudentRoutineDayPlan?,
+    workouts: List<Workout>,
+    initialPlano: Boolean,
+    onDismiss: () -> Unit,
+    onStartFree: () -> Unit,
+    onStartRoutine: () -> Unit
+) {
+    var planoSelected by remember { mutableStateOf(initialPlano && hasRoutine) }
+    val plannedSteps = remember(day, workouts) { plannedStepsForDay(day, workouts) }
+    val totalTimeMinutes = remember(plannedSteps) { plannedSteps.filter { it.targetType == "time" }.sumOf { it.targetValue } }
+    val totalRestMinutes = remember(plannedSteps) { plannedSteps.filter { it.targetType == "rest" }.sumOf { it.targetValue } }
+    val totalDistanceKm = remember(plannedSteps) { plannedSteps.filter { it.targetType == "distance" }.sumOf { it.targetValue } }
+    val planSections = remember(routine, day) {
+        if (day == null) emptyList() else parseWorkoutStructure(routine?.description.orEmpty()).filter { section ->
+            Regex("""\d+""").find(section.label)?.value?.toIntOrNull() == day.number
+        }
+    }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = PurpleBackground) {
+        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("Como voce quer treinar?", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(50)).background(PurpleSurface).padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                listOf(true, false).forEach { isPlano ->
+                    val selected = planoSelected == isPlano
+                    val enabled = isPlano && !hasRoutine
+                    Surface(
+                        modifier = Modifier.weight(1f).clickable(enabled = !enabled) { planoSelected = isPlano },
+                        color = if (selected) Lime else Color.Transparent,
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text(
+                            if (isPlano) "Plano" else "Livre",
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                            color = if (selected) PurpleDeep else Color.White.copy(alpha = if (enabled) .35f else .8f),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+            if (planoSelected) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TrainingMetric("Caminhada", "${totalTimeMinutes.cleanNumber()} min", Modifier.weight(1f))
+                    TrainingMetric("Distancia min.", "${totalDistanceKm.cleanNumber()} km", Modifier.weight(1f))
+                    TrainingMetric("Descanso", "${totalRestMinutes.cleanNumber()} min", Modifier.weight(1f))
+                }
+                Text("Planejamento", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                if (planSections.isEmpty()) {
+                    Text("Estrutura ainda nao definida para este dia.", color = Color.White.copy(alpha = .62f), fontSize = 13.sp)
+                } else {
+                    WorkoutStructureTimeline(planSections)
+                }
+            } else {
+                Text("Sua corrida, no seu ritmo", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "O GPS acompanha sua distancia e pace em tempo real, mesmo com a tela apagada pela notificacao do treino.",
+                    color = Color.White.copy(alpha = .7f),
+                    fontSize = 13.sp
+                )
+                Text("Sem limite de tempo ou distancia.", color = Lime, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+            val confirmEnabled = !planoSelected || hasRoutine
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                shape = RoundedCornerShape(20.dp),
+                color = if (confirmEnabled) Lime else Lime.copy(alpha = .4f)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(20.dp).clickable(enabled = confirmEnabled) {
+                        if (planoSelected) onStartRoutine() else onStartFree()
+                    },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (!confirmEnabled) "Sem treino hoje" else if (planoSelected) "Iniciar treino" else "Iniciar corrida",
+                        color = PurpleDeep,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Surface(modifier = Modifier.size(48.dp), shape = CircleShape, color = Color.Black.copy(alpha = if (confirmEnabled) 1f else .4f)) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
         }
     }
 }
@@ -458,6 +639,8 @@ fun StudentHomeScreen(
     announcements: List<com.example.myapplication.data.Announcement>,
     student: Student? = null,
     paymentBlocked: Boolean = false,
+    isRefreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
     onSettingsClick: () -> Unit,
     onPaymentClick: () -> Unit = {},
     onStart: () -> Unit,
@@ -505,16 +688,26 @@ fun StudentHomeScreen(
     val dayDistanceKm = remember(dayPlannedSteps) { dayPlannedSteps.filter { it.targetType == "distance" }.sumOf { it.targetValue } }
     val dayTimeMin = remember(dayPlannedSteps) { dayPlannedSteps.filter { it.targetType == "time" }.sumOf { it.targetValue } }
     val latestAnnouncement = announcements.firstOrNull()
-    val pagerState = rememberPagerState(pageCount = { 2 })
+    val completedDayKeys = remember(runHistory) {
+        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        runHistory.mapNotNull { entry -> parseIsoDate(entry.completedAt)?.let { keyFormat.format(it.time) } }.toSet()
+    }
+    val pagerState = rememberPagerState(pageCount = { 3 })
+    var showAllAvisos by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     Column(Modifier.fillMaxSize().statusBarsPadding().padding(top = 18.dp)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            ProfileAvatar(
-                avatarUrl = avatarUrl,
-                contentDescription = null,
-                modifier = Modifier.size(42.dp).clickable(onClick = onSettingsClick)
-            )
+            Box(Modifier.size(48.dp)) {
+                ProfileAvatar(
+                    avatarUrl = avatarUrl,
+                    contentDescription = null,
+                    modifier = Modifier.size(42.dp).clickable(onClick = onSettingsClick)
+                )
+                if (paymentBlocked) {
+                    PaymentWarningBadge(Modifier.size(18.dp).align(Alignment.TopEnd), 12.sp)
+                }
+            }
             Column(Modifier.padding(start = 12.dp).weight(1f)) {
                 Text("Olá, ${studentName.ifBlank { "aluno" }}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 Text(routine?.name ?: "Sem rotina ativa", color = Color.White.copy(alpha = .62f), fontSize = 12.sp)
@@ -553,10 +746,32 @@ fun StudentHomeScreen(
         }
         Spacer(Modifier.height(if (student?.paymentStatus == "pending") 6.dp else 18.dp))
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) { page ->
-            if (page == 0) {
+            if (page == 2) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(78.dp).clickable { showAllAvisos = true },
+                    color = PurpleSurface,
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Row(Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Campaign, contentDescription = null, tint = Lime, modifier = Modifier.size(20.dp))
+                        Column(Modifier.padding(start = 10.dp).weight(1f)) {
+                            Text("Aviso", color = Lime, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            Text(
+                                latestAnnouncement?.content ?: "Nenhum aviso publicado ainda.",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = Color.White.copy(alpha = .5f), modifier = Modifier.size(18.dp))
+                    }
+                }
+            } else if (page == 0) {
                 Row(Modifier.fillMaxWidth().height(78.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     weekDays.forEach { weekDay ->
                         val hasWorkout = scheduledWeekdays.contains(weekDay.key)
+                        val isCompleted = completedDayKeys.contains(weekDay.key)
                         Surface(
                             modifier = Modifier.weight(1f).fillMaxHeight().clickable {
                                 selectedDayKey = if (selectedDayKey == weekDay.key) null else weekDay.key
@@ -580,10 +795,19 @@ fun StudentHomeScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Spacer(Modifier.height(6.dp))
-                                Box(
-                                    Modifier.size(6.dp).clip(CircleShape)
-                                        .background(if (hasWorkout) (if (weekDay.isToday) PurpleDeep else Lime) else Color.Transparent)
-                                )
+                                if (isCompleted) {
+                                    Icon(
+                                        Icons.Outlined.Check,
+                                        contentDescription = "Treino concluído",
+                                        tint = if (weekDay.isToday) PurpleDeep else Lime,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                } else {
+                                    Box(
+                                        Modifier.size(6.dp).clip(CircleShape)
+                                            .background(if (hasWorkout) (if (weekDay.isToday) PurpleDeep else Lime) else Color.Transparent)
+                                    )
+                                }
                             }
                         }
                     }
@@ -620,7 +844,7 @@ fun StudentHomeScreen(
             }
         }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.Center) {
-            repeat(2) { index ->
+            repeat(3) { index ->
                 Box(
                     Modifier
                         .padding(3.dp)
@@ -636,6 +860,7 @@ fun StudentHomeScreen(
             color = if (selectedDayKey != null) Color.Black else PurpleSurface,
             shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
         ) {
+            PullToRefreshBox(isRefreshing = isRefreshing, onRefresh = onRefresh) {
             LazyColumn(
                 contentPadding = PaddingValues(16.dp, 22.dp, 16.dp, 140.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -693,7 +918,7 @@ fun StudentHomeScreen(
                     item {
                         Surface(color = Lime, shape = RoundedCornerShape(20.dp)) {
                             Row(
-                                Modifier.fillMaxWidth().padding(20.dp),
+                                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(Modifier.weight(1f)) {
@@ -718,7 +943,30 @@ fun StudentHomeScreen(
                         }
                     }
                     item {
-                        Surface(color = PurpleBackground, shape = RoundedCornerShape(16.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Desafios extras", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            if (challenges.isEmpty()) {
+                                Text("Nenhum desafio disponível ainda.", color = Color.White.copy(alpha = .62f), fontSize = 13.sp)
+                            } else {
+                                ChallengeCarousel(challenges, onSelect = { selectedChallenge = it })
+                            }
+                        }
+                    }
+                }
+            }
+            }
+        }
+    }
+
+    if (showAllAvisos) {
+        ModalBottomSheet(onDismissRequest = { showAllAvisos = false }, containerColor = PurpleBackground) {
+            Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("Avisos", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                if (announcements.isEmpty()) {
+                    Text("Nenhum aviso publicado ainda.", color = Color.White.copy(alpha = .62f), fontSize = 13.sp)
+                } else {
+                    announcements.forEach { announcement ->
+                        Surface(color = PurpleSurface, shape = RoundedCornerShape(16.dp)) {
                             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     ProfileAvatar(avatarUrl = instructorAvatarUrl, contentDescription = null, modifier = Modifier.size(30.dp))
@@ -730,27 +978,12 @@ fun StudentHomeScreen(
                                         fontSize = 13.sp
                                     )
                                 }
-                                Text(
-                                    latestAnnouncement?.content ?: "Nenhum aviso publicado ainda.",
-                                    color = Color.White,
-                                    fontSize = 13.sp,
-                                    maxLines = 4,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("Desafios extras", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            if (challenges.isEmpty()) {
-                                Text("Nenhum desafio disponível ainda.", color = Color.White.copy(alpha = .62f), fontSize = 13.sp)
-                            } else {
-                                ChallengeCarousel(challenges, onSelect = { selectedChallenge = it })
+                                Text(announcement.content, color = Color.White, fontSize = 13.sp)
                             }
                         }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
@@ -812,8 +1045,8 @@ fun ChallengeCarousel(challenges: List<Challenge>, onSelect: (Challenge) -> Unit
     val pagerState = rememberPagerState(pageCount = { challenges.size })
     HorizontalPager(
         state = pagerState,
-        contentPadding = PaddingValues(horizontal = 44.dp),
-        pageSpacing = 14.dp,
+        contentPadding = PaddingValues(horizontal = 52.dp),
+        pageSpacing = 6.dp,
         modifier = Modifier.fillMaxWidth().height(150.dp)
     ) { page ->
         val pageOffset = (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
@@ -1219,6 +1452,8 @@ fun StudentWorkoutPlayerScreen(
     forceFinish: Boolean = false,
     headerTitle: String? = null,
     headerSubtitle: String? = null,
+    targetType: String? = null,
+    targetValue: Double = 0.0,
     onBack: () -> Unit,
     onComplete: (WorkoutSessionPayload) -> Unit
 ) {
@@ -1277,7 +1512,12 @@ fun StudentWorkoutPlayerScreen(
     val stepElapsedMs = (elapsedMs - stepBaseElapsedMs).coerceAtLeast(0L)
     val stepDistanceMeters = (distanceMeters - stepBaseDistanceMeters).coerceAtLeast(0.0)
     val currentProgress = currentStep?.progressFor(stepElapsedMs, stepDistanceMeters) ?: 0f
-    val currentStepCompleted = freeRun || currentStep == null || currentProgress >= 1f
+    val targetMet = when (targetType) {
+        "distance" -> distanceMeters / 1000.0 >= targetValue
+        "time" -> elapsedMs / 60_000.0 >= targetValue
+        else -> true
+    }
+    val currentStepCompleted = if (freeRun) targetMet else (currentStep == null || currentProgress >= 1f)
     val totalTimeMinutes = plannedSteps.filter { it.targetType == "time" }.sumOf { it.targetValue }
     val totalRestMinutes = plannedSteps.filter { it.targetType == "rest" }.sumOf { it.targetValue }
     val totalDistanceKm = plannedSteps.filter { it.targetType == "distance" }.sumOf { it.targetValue }
@@ -1312,6 +1552,16 @@ fun StudentWorkoutPlayerScreen(
         sendTrackingAction(context, WorkoutTrackingService.ACTION_PAUSE)
     }
 
+    // Pausar ou fechar agora encerra a corrida de vez: tempo, distancia e progresso de etapa sao perdidos.
+    fun abandonRun() {
+        sendTrackingAction(context, WorkoutTrackingService.ACTION_PAUSE)
+        started = false
+        currentStepIndex = 0
+        stepBaseElapsedMs = 0L
+        stepBaseDistanceMeters = 0.0
+        alertedStep = -1
+    }
+
     LaunchedEffect(autoStart) {
         if (autoStart && !started) startOrResume()
     }
@@ -1326,7 +1576,7 @@ fun StudentWorkoutPlayerScreen(
             onComplete(
                 WorkoutSessionPayload(
                     routineId = routine?.id.orEmpty(),
-                    routineName = routine?.name.orEmpty(),
+                    routineName = if (freeRun) "Livre" else routine?.name.orEmpty(),
                     dayNumber = day?.number ?: 0,
                     cycleStep = cycleStep,
                     elapsedMs = snapshot.elapsedMs,
@@ -1346,7 +1596,11 @@ fun StudentWorkoutPlayerScreen(
         WorkoutTrackingMapScreen(
             stepName = headerTitle ?: (if (freeRun) "Corrida livre" else currentStep?.name ?: "Última etapa"),
             headerSubtitle = headerSubtitle,
-            stepTarget = if (freeRun) "Sem limite de tempo ou distância" else currentStep?.let { formatStepTarget(it) } ?: "Treino concluído",
+            stepTarget = if (freeRun) {
+                if (targetType != null) (headerSubtitle ?: "Meta nao atingida") else "Sem limite de tempo ou distância"
+            } else {
+                currentStep?.let { formatStepTarget(it) } ?: "Treino concluído"
+            },
             progress = currentProgress,
             running = running,
             elapsedMs = elapsedMs,
@@ -1355,9 +1609,9 @@ fun StudentWorkoutPlayerScreen(
             routePoints = routePoints,
             nextLabel = if (freeRun) "Finalizar corrida" else if (currentStepIndex < plannedSteps.lastIndex) "Próxima etapa" else "Finalizar treino",
             nextEnabled = currentStepCompleted,
-            onClose = onBack,
+            onClose = { abandonRun(); onBack() },
             onToggleRunning = {
-                if (running) sendTrackingAction(context, WorkoutTrackingService.ACTION_PAUSE) else startOrResume()
+                if (running) abandonRun() else startOrResume()
             },
             onNext = {
                 if (currentStepIndex < plannedSteps.lastIndex) {
@@ -1390,8 +1644,12 @@ fun StudentWorkoutPlayerScreen(
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(if (freeRun) "Sua corrida, no seu ritmo" else "Tudo pronto para comecarmos o treino?", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                        Text(if (freeRun) "Sem limite de tempo ou distancia" else "Plano | Dia ${day?.number}", color = Lime, fontWeight = FontWeight.SemiBold)
+                        Text(headerTitle ?: (if (freeRun) "Sua corrida, no seu ritmo" else "Tudo pronto para comecarmos o treino?"), color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (freeRun) (if (targetType != null) (headerSubtitle ?: "") else "Sem limite de tempo ou distancia") else "Plano | Dia ${day?.number}",
+                            color = Lime,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                     IconButton(onClick = onBack) { Icon(Icons.Outlined.Close, "Fechar", tint = Color.White) }
                 }
@@ -1526,7 +1784,7 @@ fun StudentWorkoutPlayerScreen(
                         onComplete(
                             WorkoutSessionPayload(
                                 routineId = routine?.id.orEmpty(),
-                                routineName = routine?.name.orEmpty(),
+                                routineName = if (freeRun) "Livre" else routine?.name.orEmpty(),
                                 dayNumber = day?.number ?: 0,
                                 cycleStep = cycleStep,
                                 elapsedMs = snapshot.elapsedMs,
@@ -1765,11 +2023,14 @@ fun StudentFinanceScreen(
     pixKey: String,
     student: Student?,
     onPay: () -> Unit,
+    onBillingDayChange: (Int) -> Unit = {},
     onBack: () -> Unit = {}
 ) {
-    val amount = routine?.description?.let { extractRoutinePrice(it) }.orEmpty()
+    val amount = student?.monthlyFee.orEmpty().ifBlank { routine?.description?.let { extractRoutinePrice(it) }.orEmpty() }
     val pending = student?.paymentStatus != "paid"
     val hasProofSubmitted = !student?.paymentProofUrl.isNullOrBlank()
+    var editingBillingDay by remember { mutableStateOf(false) }
+    var pendingBillingDay by remember(student?.billingDay) { mutableStateOf(student?.billingDay ?: 5) }
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(PurpleBackground).statusBarsPadding(),
         contentPadding = PaddingValues(16.dp, 24.dp, 16.dp, 140.dp),
@@ -1778,7 +2039,10 @@ fun StudentFinanceScreen(
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Financeiro", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Financeiro", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                        if (pending) PaymentWarningBadge(Modifier.padding(start = 8.dp).size(22.dp), 14.sp)
+                    }
                     Text("Seu extrato e faturas", color = Color.White.copy(alpha = .62f))
                 }
                 IconButton(onClick = onBack) { Icon(Icons.Outlined.Close, "Fechar", tint = Color.White) }
@@ -1806,6 +2070,35 @@ fun StudentFinanceScreen(
                     ) {
                         Icon(Icons.Outlined.Payments, contentDescription = null)
                         Text("Pagar fatura atual", Modifier.padding(start = 8.dp), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+        item {
+            Surface(color = PurpleSurface, shape = RoundedCornerShape(18.dp)) {
+                Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Dia de pagamento", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text("Vence todo dia ${student?.billingDay ?: 5}", color = Color.White.copy(alpha = .62f), fontSize = 13.sp)
+                        }
+                        TextButton(onClick = { editingBillingDay = !editingBillingDay }) {
+                            Text(if (editingBillingDay) "Cancelar" else "Alterar", color = Lime, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (editingBillingDay) {
+                        BillingDayPicker(pendingBillingDay) { pendingBillingDay = it }
+                        Button(
+                            onClick = {
+                                onBillingDayChange(pendingBillingDay)
+                                editingBillingDay = false
+                            },
+                            modifier = Modifier.fillMaxWidth().height(46.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                            shape = RoundedCornerShape(50)
+                        ) {
+                            Text("Salvar novo dia", fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -1855,36 +2148,15 @@ fun StudentExtractRow(title: String, amount: String, status: String, paid: Boole
 
 @Composable
 fun PixPaymentScreen(
-    pixKey: String,
     amount: String,
     student: Student? = null,
     onBack: () -> Unit,
-    onUploadProof: suspend (Uri) -> Unit = {}
+    onPayPix: suspend (cpf: String) -> AsaasPixResult? = { null },
+    onCheckStatus: () -> Unit = {},
+    onSubscribeCard: suspend (cpf: String, postalCode: String, addressNumber: String, card: AsaasCardInput) -> AsaasSubscriptionResult? = { _, _, _, _ -> null },
+    onCancelSubscription: () -> Unit = {}
 ) {
-    val context = LocalContext.current
-    val hasProofSubmitted = !student?.paymentProofUrl.isNullOrBlank()
-    val scope = rememberCoroutineScope()
-    var uploading by remember { mutableStateOf(false) }
-    val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            uploading = true
-            scope.launch {
-                runCatching { onUploadProof(uri) }
-                uploading = false
-            }
-        }
-    }
-    val brCode = remember(pixKey, amount) { if (pixKey.isBlank()) "" else buildPixBrCode(pixKey = pixKey, amount = amount) }
-    val qrBitmap = remember(brCode) {
-        if (brCode.isBlank()) null else runCatching {
-            val matrix = com.google.zxing.qrcode.QRCodeWriter().encode(brCode, com.google.zxing.BarcodeFormat.QR_CODE, 640, 640)
-            android.graphics.Bitmap.createBitmap(640, 640, android.graphics.Bitmap.Config.RGB_565).apply {
-                for (x in 0 until 640) for (y in 0 until 640) {
-                    setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
-                }
-            }
-        }.getOrNull()
-    }
+    var paymentTab by remember { mutableStateOf("pix") }
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(PurpleDeep).statusBarsPadding(),
         contentPadding = PaddingValues(16.dp, 20.dp, 16.dp, 140.dp),
@@ -1892,105 +2164,344 @@ fun PixPaymentScreen(
     ) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Pix", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("Pagamento", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 IconButton(onClick = onBack) { Icon(Icons.Outlined.Close, "Fechar", tint = Color.White) }
             }
         }
         item {
-            Surface(color = Color.White, shape = RoundedCornerShape(18.dp)) {
-                Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
-                    if (qrBitmap != null) {
-                        Image(qrBitmap.asImageBitmap(), "QR Code Pix", Modifier.size(200.dp))
-                    } else {
-                        Icon(Icons.Outlined.QrCode2, contentDescription = null, tint = PurpleDeep, modifier = Modifier.size(150.dp))
-                    }
-                }
-            }
-        }
-        item {
-            Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Valor", color = Color.White.copy(alpha = .62f), fontSize = 12.sp)
-                    Text(formatMoneyLabel(amount), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 24.sp)
-                    Text("Chave Pix", color = Color.White.copy(alpha = .62f), fontSize = 12.sp)
-                    Text(pixKey.ifBlank { "Chave Pix nao configurada" }, color = Lime, fontWeight = FontWeight.SemiBold)
-                }
-            }
-        }
-        if (brCode.isNotBlank()) item {
-            Button(
-                onClick = {
-                    val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
-                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Pix", brCode))
-                },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
-                shape = RoundedCornerShape(50)
-            ) {
-                Text("Copiar código Pix", fontWeight = FontWeight.Bold)
-            }
-        }
-        item {
-            Surface(color = PurpleSurface, shape = RoundedCornerShape(18.dp)) {
-                Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Comprovante de pagamento", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    if (!student?.paymentProofRejectionReason.isNullOrBlank()) {
-                        Surface(color = Color(0xFFFF6B6B).copy(alpha = .15f), shape = RoundedCornerShape(12.dp)) {
-                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("Comprovante recusado", color = Color(0xFFFF6B6B), fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                                Text(student?.paymentProofRejectionReason.orEmpty(), color = Color.White.copy(alpha = .8f), fontSize = 12.sp)
-                            }
-                        }
-                    }
-                    Text(
-                        if (hasProofSubmitted) {
-                            "Comprovante enviado. Aguardando aprovação do professor."
-                        } else {
-                            "Depois de pagar, anexe o comprovante (foto ou PDF) para o professor aprovar."
-                        },
-                        color = Color.White.copy(alpha = .65f),
-                        fontSize = 13.sp
-                    )
-                    Button(
-                        onClick = { documentPicker.launch("*/*") },
-                        enabled = !uploading,
-                        modifier = Modifier.fillMaxWidth().height(46.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                listOf("pix" to "Pix", "assinatura" to "Assinatura cartão").forEach { (key, label) ->
+                    val selected = paymentTab == key
+                    Surface(
+                        modifier = Modifier.weight(1f).clickable { paymentTab = key },
+                        color = if (selected) Lime else PurpleSurface,
                         shape = RoundedCornerShape(50)
                     ) {
                         Text(
-                            when {
-                                uploading -> "Enviando..."
-                                hasProofSubmitted -> "Reenviar comprovante"
-                                else -> "Anexar comprovante"
-                            },
-                            fontWeight = FontWeight.Bold
+                            label,
+                            modifier = Modifier.padding(vertical = 12.dp),
+                            color = if (selected) PurpleDeep else Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
             }
         }
-        item {
-            Text(
-                "Confirme manualmente o recebimento apos o pagamento. Nao ha validacao automatica.",
-                color = Color.White.copy(alpha = .55f),
-                fontSize = 12.sp
-            )
+        if (paymentTab == "assinatura") {
+            item {
+                CardSubscriptionForm(
+                    amount = amount,
+                    subscriptionActive = student?.asaasSubscriptionActive == true,
+                    onSubscribe = onSubscribeCard,
+                    onCancelSubscription = onCancelSubscription
+                )
+            }
+        }
+        if (paymentTab == "pix") {
+            item {
+                AsaasPixForm(
+                    amount = amount,
+                    alreadyPaidRecently = student?.paymentStatus == "paid",
+                    subscriptionActive = student?.asaasSubscriptionActive == true,
+                    onPayPix = onPayPix,
+                    onCheckStatus = onCheckStatus
+                )
+            }
         }
     }
 }
 
+@Composable
+private fun AsaasPixForm(
+    amount: String,
+    alreadyPaidRecently: Boolean,
+    subscriptionActive: Boolean,
+    onPayPix: suspend (cpf: String) -> AsaasPixResult?,
+    onCheckStatus: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var cpf by remember { mutableStateOf("") }
+    var generating by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<AsaasPixResult?>(null) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    val qrBitmap = remember(result?.encodedImage) {
+        result?.encodedImage?.takeIf { it.isNotBlank() }?.let { encoded ->
+            runCatching {
+                val bytes = android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
+                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }.getOrNull()
+        }
+    }
+
+    Surface(color = PurpleSurface, shape = RoundedCornerShape(18.dp)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Pagar com Pix", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(
+                "Geramos um Pix de ${formatMoneyLabel(chargeAmountWithPlatformFee(amount))} pelo Asaas (mensalidade de ${formatMoneyLabel(amount)} + taxa de processamento de 5%). A confirmação é automática, não precisa enviar comprovante.",
+                color = Color.White.copy(alpha = .65f),
+                fontSize = 12.sp
+            )
+            if (subscriptionActive) {
+                Surface(color = Color(0xFFFFD166).copy(alpha = .18f), shape = RoundedCornerShape(12.dp)) {
+                    Text(
+                        "Você já tem uma assinatura no cartão ativa. Pagar também por Pix pode gerar cobrança duplicada neste mês.",
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        color = Color(0xFFFFD166),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+            if (alreadyPaidRecently && result == null) {
+                Text("Sua mensalidade já está em dia.", color = Lime, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+            if (result == null) {
+                CardFormField(cpf, { cpf = it.filter(Char::isDigit).take(11) }, "CPF")
+                if (cpf.length == 11 && !isValidCpf(cpf)) {
+                    Text("CPF invalido", color = Color(0xFFFF6B6B), fontSize = 12.sp)
+                }
+                feedback?.let { Text(it, color = Color(0xFFFF6B6B), fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+                Button(
+                    onClick = {
+                        generating = true
+                        feedback = null
+                        scope.launch {
+                            val pix = runCatching { onPayPix(cpf) }.getOrNull()
+                            if (pix != null && pix.paymentId.isNotBlank()) {
+                                result = pix
+                            } else {
+                                feedback = "Não foi possível gerar o Pix. Tente novamente em alguns instantes."
+                            }
+                            generating = false
+                        }
+                    },
+                    enabled = isValidCpf(cpf) && !generating,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Text(if (generating) "Gerando..." else "Gerar Pix", fontWeight = FontWeight.Bold)
+                }
+            } else {
+                Surface(color = Color.White, shape = RoundedCornerShape(18.dp)) {
+                    Box(Modifier.fillMaxWidth().height(240.dp), contentAlignment = Alignment.Center) {
+                        if (qrBitmap != null) {
+                            Image(qrBitmap.asImageBitmap(), "QR Code Pix", Modifier.size(200.dp))
+                        } else {
+                            Icon(Icons.Outlined.QrCode2, contentDescription = null, tint = PurpleDeep, modifier = Modifier.size(150.dp))
+                        }
+                    }
+                }
+                Button(
+                    onClick = {
+                        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Pix", result?.payload.orEmpty()))
+                        android.widget.Toast.makeText(context, "Código Pix copiado", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Text("Copiar código Pix", fontWeight = FontWeight.Bold)
+                }
+                TextButton(onClick = onCheckStatus, modifier = Modifier.fillMaxWidth()) {
+                    Text("Já paguei, verificar agora", color = Lime, fontWeight = FontWeight.Bold)
+                }
+                Text(
+                    "Confirmação automática assim que o pagamento for recebido.",
+                    color = Color.White.copy(alpha = .55f),
+                    fontSize = 12.sp
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardSubscriptionForm(
+    amount: String,
+    subscriptionActive: Boolean,
+    onSubscribe: suspend (cpf: String, postalCode: String, addressNumber: String, card: AsaasCardInput) -> AsaasSubscriptionResult?,
+    onCancelSubscription: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var cpf by remember { mutableStateOf("") }
+    var postalCode by remember { mutableStateOf("") }
+    var addressNumber by remember { mutableStateOf("") }
+    var holderName by remember { mutableStateOf("") }
+    var cardNumber by remember { mutableStateOf("") }
+    var expiryMonth by remember { mutableStateOf("") }
+    var expiryYear by remember { mutableStateOf("") }
+    var ccv by remember { mutableStateOf("") }
+    var submitting by remember { mutableStateOf(false) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var feedbackIsError by remember { mutableStateOf(false) }
+
+    if (subscriptionActive) {
+        Surface(color = PurpleSurface, shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Assinatura ativa", color = Lime, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    "Seu cartão é cobrado automaticamente todo mês (${formatMoneyLabel(amount)}).",
+                    color = Color.White.copy(alpha = .72f),
+                    fontSize = 13.sp
+                )
+                Button(
+                    onClick = onCancelSubscription,
+                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF6B6B), contentColor = Color.White),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Text("Cancelar assinatura", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        return
+    }
+
+    Surface(color = PurpleSurface, shape = RoundedCornerShape(18.dp)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Assinar com cartão", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            Text(
+                "Cobrança automática de ${formatMoneyLabel(chargeAmountWithPlatformFee(amount))} todo mês (inclui taxa de processamento de 5% sobre os ${formatMoneyLabel(amount)} do plano), sem precisar pagar manualmente.",
+                color = Color.White.copy(alpha = .65f),
+                fontSize = 12.sp
+            )
+            CardFormField(cpf, { cpf = it.filter(Char::isDigit).take(11) }, "CPF")
+            if (cpf.length == 11 && !isValidCpf(cpf)) {
+                Text("CPF invalido", color = Color(0xFFFF6B6B), fontSize = 12.sp)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(1f)) { CardFormField(postalCode, { postalCode = it.filter(Char::isDigit).take(8) }, "CEP") }
+                Box(Modifier.weight(1f)) { CardFormField(addressNumber, { addressNumber = it.take(10) }, "Número") }
+            }
+            CardFormField(holderName, { holderName = it }, "Nome impresso no cartão")
+            CardFormField(cardNumber, { cardNumber = it.filter(Char::isDigit).take(19) }, "Número do cartão")
+            if (cardNumber.length >= 13 && !isValidCardNumber(cardNumber)) {
+                Text("Número do cartão invalido", color = Color(0xFFFF6B6B), fontSize = 12.sp)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(1f)) { CardFormField(expiryMonth, { expiryMonth = it.filter(Char::isDigit).take(2) }, "Mês (MM)") }
+                Box(Modifier.weight(1f)) { CardFormField(expiryYear, { expiryYear = it.filter(Char::isDigit).take(4) }, "Ano (AAAA)") }
+                Box(Modifier.weight(1f)) { CardFormField(ccv, { ccv = it.filter(Char::isDigit).take(4) }, "CVV") }
+            }
+            if (expiryMonth.length == 2 && expiryYear.length == 4 && !isCardExpiryValid(expiryMonth, expiryYear)) {
+                Text("Validade invalida ou cartao vencido", color = Color(0xFFFF6B6B), fontSize = 12.sp)
+            }
+            feedback?.let {
+                Text(it, color = if (feedbackIsError) Color(0xFFFF6B6B) else Lime, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+            val canSubmit = isValidCpf(cpf) && postalCode.length == 8 && addressNumber.isNotBlank() &&
+                holderName.isNotBlank() && isValidCardNumber(cardNumber) && expiryMonth.length == 2 && expiryYear.length == 4 &&
+                isCardExpiryValid(expiryMonth, expiryYear) && ccv.length >= 3
+            Button(
+                onClick = {
+                    submitting = true
+                    feedback = null
+                    scope.launch {
+                        val result = runCatching {
+                            onSubscribe(cpf, postalCode, addressNumber, AsaasCardInput(holderName, cardNumber, expiryMonth, expiryYear, ccv))
+                        }.getOrNull()
+                        if (result != null) {
+                            feedbackIsError = false
+                            feedback = "Assinatura criada com sucesso."
+                        } else {
+                            feedbackIsError = true
+                            feedback = "Não foi possível assinar. Verifique os dados do cartão."
+                        }
+                        submitting = false
+                    }
+                },
+                enabled = canSubmit && !submitting,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                shape = RoundedCornerShape(50)
+            ) {
+                Text(if (submitting) "Assinando..." else "Assinar", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardFormField(value: String, onValueChange: (String) -> Unit, label: String) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = Color.White,
+            unfocusedTextColor = Color.White,
+            focusedLabelColor = Lime,
+            unfocusedLabelColor = Color.White.copy(alpha = .6f),
+            focusedBorderColor = Lime,
+            unfocusedBorderColor = Color.White.copy(alpha = .3f)
+        )
+    )
+}
+
+private const val PLATFORM_FEE_RATE = 0.05
+
+private fun chargeAmountWithPlatformFee(monthlyFee: String): String {
+    val value = monthlyFee.trim().replace(".", "").replace(",", ".").toDoubleOrNull() ?: return monthlyFee
+    return "%.2f".format(value * (1 + PLATFORM_FEE_RATE)).replace(".", ",")
+}
+
+private fun isValidCpf(value: String): Boolean {
+    val cpf = value.filter(Char::isDigit)
+    if (cpf.length != 11 || cpf.all { it == cpf[0] }) return false
+    val digits = cpf.map { it - '0' }
+    for (checkIndex in listOf(9, 10)) {
+        var sum = 0
+        for (i in 0 until checkIndex) sum += digits[i] * (checkIndex + 1 - i)
+        val remainder = (sum * 10) % 11
+        if ((if (remainder == 10) 0 else remainder) != digits[checkIndex]) return false
+    }
+    return true
+}
+
+private fun isValidCardNumber(value: String): Boolean {
+    val digits = value.filter(Char::isDigit)
+    if (digits.length < 13) return false
+    var sum = 0
+    var alternate = false
+    for (i in digits.length - 1 downTo 0) {
+        var n = digits[i] - '0'
+        if (alternate) { n *= 2; if (n > 9) n -= 9 }
+        sum += n
+        alternate = !alternate
+    }
+    return sum % 10 == 0
+}
+
+private fun isCardExpiryValid(month: String, year: String): Boolean {
+    val m = month.toIntOrNull() ?: return false
+    val y = year.toIntOrNull() ?: return false
+    if (m !in 1..12) return false
+    val now = Calendar.getInstance()
+    val currentYear = now.get(Calendar.YEAR)
+    val currentMonth = now.get(Calendar.MONTH) + 1
+    return y > currentYear || (y == currentYear && m >= currentMonth)
+}
 
 @Composable
 fun StudentProfileSummaryScreen(
     studentName: String,
     avatarUrl: String,
     runHistory: List<RunHistoryEntry>,
+    paymentAlert: Boolean = false,
     onBack: () -> Unit,
     onSettingsClick: () -> Unit,
-    onSelectRun: (RunHistoryEntry) -> Unit
+    onSelectRun: (RunHistoryEntry) -> Unit,
+    onOpenHistory: () -> Unit = {}
 ) {
     val totalDistanceKm = remember(runHistory) { runHistory.sumOf { it.distanceMeters } / 1000.0 }
+    val recentRuns = remember(runHistory) { runHistory.sortedByDescending { it.completedAt }.take(3) }
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(PurpleBackground).statusBarsPadding(),
         contentPadding = PaddingValues(16.dp, 14.dp, 16.dp, 140.dp),
@@ -2000,7 +2511,10 @@ fun StudentProfileSummaryScreen(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar", tint = Color.White) }
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = onSettingsClick) { Icon(Icons.Outlined.Settings, "Configurações", tint = Color.White) }
+                Box {
+                    IconButton(onClick = onSettingsClick) { Icon(Icons.Outlined.Settings, "Configurações", tint = Color.White) }
+                    if (paymentAlert) PaymentWarningBadge(Modifier.size(18.dp).align(Alignment.TopEnd), 12.sp)
+                }
             }
         }
         item {
@@ -2024,13 +2538,19 @@ fun StudentProfileSummaryScreen(
             }
         }
         item {
-            Text("Histórico de corridas", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-        }
-        if (runHistory.isEmpty()) {
-            item { EmptyDetailState("Nenhuma corrida registrada ainda.") }
-        } else {
-            items(runHistory, key = { it.id }) { run ->
-                RunHistoryRow(run, onClick = { onSelectRun(run) })
+            Surface(color = PurpleSurface, shape = RoundedCornerShape(18.dp), modifier = Modifier.clickable(onClick = onOpenHistory)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Histórico de corridas", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                        Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null, tint = Color.White.copy(alpha = .5f), modifier = Modifier.size(18.dp))
+                    }
+                    if (recentRuns.isEmpty()) {
+                        Text("Nenhuma corrida registrada ainda.", color = Color.White.copy(alpha = .62f), fontSize = 13.sp)
+                    } else {
+                        recentRuns.forEach { run -> RunHistoryRow(run, onClick = { onSelectRun(run) }) }
+                        Text("Ver tudo e filtrar por data ou local", color = Lime, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    }
+                }
             }
         }
     }
@@ -2057,26 +2577,147 @@ fun MonthlyKmChart(runHistory: List<RunHistoryEntry>) {
     Column(Modifier.fillMaxWidth()) {
         Text("Evolução mensal (km)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Spacer(Modifier.height(14.dp))
-        Row(Modifier.fillMaxWidth().height(140.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            buckets.forEach { (label, km) ->
-                Column(
-                    modifier = Modifier.weight(1f).fillMaxHeight(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Spacer(Modifier.weight(1f))
-                    Text("%.1f".format(km), color = Color.White.copy(alpha = .7f), fontSize = 9.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Box(
-                        modifier = Modifier
-                            .width(18.dp)
-                            .fillMaxHeight(fraction = (km / maxKm).toFloat().coerceIn(0.04f, 1f))
-                            .background(Lime, RoundedCornerShape(6.dp))
+        Box(Modifier.fillMaxWidth().height(140.dp)) {
+            Canvas(Modifier.fillMaxWidth().height(108.dp)) {
+                val stepX = if (buckets.size > 1) size.width / (buckets.size - 1) else 0f
+                val points = buckets.mapIndexed { index, (_, km) ->
+                    val x = stepX * index
+                    val y = size.height * (1f - (km / maxKm).toFloat().coerceIn(0f, 1f))
+                    Offset(x, y)
+                }
+                if (points.size > 1) {
+                    val linePath = Path().apply {
+                        moveTo(points.first().x, points.first().y)
+                        points.drop(1).forEach { lineTo(it.x, it.y) }
+                    }
+                    val fillPath = Path().apply {
+                        addPath(linePath)
+                        lineTo(points.last().x, size.height)
+                        lineTo(points.first().x, size.height)
+                        close()
+                    }
+                    drawPath(fillPath, brush = Brush.verticalGradient(listOf(Lime.copy(alpha = .28f), Color.Transparent)))
+                    drawPath(linePath, color = Lime, style = Stroke(width = 6f, cap = StrokeCap.Round))
+                }
+                points.forEach { point ->
+                    drawCircle(color = Lime, radius = 8f, center = point)
+                    drawCircle(color = PurpleSurface, radius = 4f, center = point)
+                }
+            }
+            Row(Modifier.fillMaxWidth().align(Alignment.TopCenter), horizontalArrangement = Arrangement.SpaceBetween) {
+                buckets.forEach { (_, km) ->
+                    Text(
+                        "%.1f".format(km),
+                        modifier = Modifier.weight(1f),
+                        color = Color.White.copy(alpha = .7f),
+                        fontSize = 9.sp,
+                        textAlign = TextAlign.Center
                     )
-                    Spacer(Modifier.height(6.dp))
-                    Text(label, color = Color.White.copy(alpha = .55f), fontSize = 10.sp)
                 }
             }
         }
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            buckets.forEach { (label, _) ->
+                Text(label, modifier = Modifier.weight(1f), color = Color.White.copy(alpha = .55f), fontSize = 10.sp, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
+@Composable
+fun RunHistoryListScreen(
+    runHistory: List<RunHistoryEntry>,
+    onBack: () -> Unit,
+    onSelectRun: (RunHistoryEntry) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var selectedMonth by remember { mutableStateOf<String?>(null) }
+    val monthKeyFormat = remember { SimpleDateFormat("yyyy-MM", Locale.US) }
+    val monthLabelFormat = remember { SimpleDateFormat("MMM yyyy", Locale("pt", "BR")) }
+    val months = remember(runHistory) {
+        runHistory.mapNotNull { parseIsoDate(it.completedAt)?.let { cal -> monthKeyFormat.format(cal.time) } }
+            .distinct()
+            .sortedDescending()
+    }
+    val filtered = remember(runHistory, query, selectedMonth) {
+        runHistory.filter { run ->
+            val matchesQuery = query.isBlank() || run.routineName.contains(query, ignoreCase = true)
+            val matchesMonth = selectedMonth == null ||
+                parseIsoDate(run.completedAt)?.let { monthKeyFormat.format(it.time) } == selectedMonth
+            matchesQuery && matchesMonth
+        }.sortedByDescending { it.completedAt }
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().background(PurpleBackground).statusBarsPadding(),
+        contentPadding = PaddingValues(16.dp, 14.dp, 16.dp, 140.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar", tint = Color.White) }
+                Text("Histórico de corridas", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
+            }
+        }
+        item {
+            TextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Buscar por treino ou local") },
+                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = TextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedContainerColor = PurpleSurface,
+                    unfocusedContainerColor = PurpleSurface,
+                    focusedIndicatorColor = Lime,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    cursorColor = Lime,
+                    focusedPlaceholderColor = Color.White.copy(alpha = .5f),
+                    unfocusedPlaceholderColor = Color.White.copy(alpha = .5f)
+                )
+            )
+        }
+        if (months.isNotEmpty()) {
+            item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        MonthFilterChip(label = "Todas as datas", selected = selectedMonth == null) { selectedMonth = null }
+                    }
+                    items(months) { monthKey ->
+                        val label = runCatching { monthLabelFormat.format(monthKeyFormat.parse(monthKey)!!) }.getOrDefault(monthKey)
+                            .replaceFirstChar { it.uppercase() }
+                        MonthFilterChip(label = label, selected = selectedMonth == monthKey) { selectedMonth = monthKey }
+                    }
+                }
+            }
+        }
+        if (filtered.isEmpty()) {
+            item { EmptyDetailState("Nenhuma corrida encontrada.") }
+        } else {
+            items(filtered, key = { it.id }) { run -> RunHistoryRow(run, onClick = { onSelectRun(run) }) }
+        }
+    }
+}
+
+@Composable
+private fun MonthFilterChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.clickable(onClick = onClick),
+        color = if (selected) Lime else PurpleSurface,
+        shape = RoundedCornerShape(50)
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            color = if (selected) PurpleDeep else Color.White.copy(alpha = .8f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 
@@ -2159,6 +2800,7 @@ fun StudentSettingsScreen(
     profileAvatarUrl: String,
     onProfileSave: (String, Uri?) -> Unit,
     onBack: () -> Unit,
+    paymentAlert: Boolean = false,
     onOpenFinanceiro: () -> Unit,
     onLogout: () -> Unit
 ) {
@@ -2180,36 +2822,54 @@ fun StudentSettingsScreen(
         }
         item {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                if (selectedPhotoUri != null || profileAvatarUrl.isNotBlank()) {
-                    AsyncImage(
-                        model = selectedPhotoUri ?: profileAvatarUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(92.dp).clip(CircleShape)
-                    )
-                } else {
-                    Image(
-                        painter = painterResource(R.drawable.profile),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(92.dp).clip(CircleShape)
-                    )
+                Box(
+                    modifier = Modifier.size(92.dp).clip(CircleShape).clickable { photoPicker.launch("image/*") },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (selectedPhotoUri != null || profileAvatarUrl.isNotBlank()) {
+                        AsyncImage(
+                            model = selectedPhotoUri ?: profileAvatarUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                        )
+                    } else {
+                        Image(
+                            painter = painterResource(R.drawable.profile),
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                        )
+                    }
+                    Box(
+                        modifier = Modifier.align(Alignment.BottomEnd).size(26.dp).clip(CircleShape).background(Lime),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Outlined.Edit, contentDescription = "Trocar foto", tint = PurpleDeep, modifier = Modifier.size(14.dp))
+                    }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(draftName, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     Icon(
                         Icons.Outlined.Edit,
-                        contentDescription = "Editar",
+                        contentDescription = "Editar nome",
                         tint = Lime,
                         modifier = Modifier.padding(start = 6.dp).size(18.dp).clickable { editingProfile = !editingProfile }
                     )
                 }
+                if (selectedPhotoUri != null && !editingProfile) {
+                    Button(
+                        onClick = { onProfileSave(draftName, selectedPhotoUri) },
+                        modifier = Modifier.fillMaxWidth().height(46.dp).padding(top = 10.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text("Salvar nova foto", fontWeight = FontWeight.Bold)
+                    }
+                }
                 if (editingProfile) {
                     Spacer(Modifier.height(10.dp))
-                    FormTextField(draftName, { draftName = it }, "Nome exibido")
-                    TextButton(onClick = { photoPicker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Escolher foto do dispositivo", color = Lime, fontWeight = FontWeight.Bold)
-                    }
+                    FormTextField(draftName, { draftName = it.take(80) }, "Nome exibido")
                     Button(
                         onClick = { onProfileSave(draftName, selectedPhotoUri); editingProfile = false },
                         enabled = draftName.length > 1,
@@ -2227,6 +2887,7 @@ fun StudentSettingsScreen(
                 title = "Financeiro",
                 subtitle = "Faturas, plano e pagamento via Pix",
                 icon = Icons.Outlined.Payments,
+                showAlert = paymentAlert,
                 onClick = onOpenFinanceiro
             )
         }
@@ -2287,35 +2948,60 @@ fun StudentEventsScreen(events: List<Event>, onEventClick: (Event) -> Unit) {
 
 @Composable
 fun StudentEventDetailScreen(event: Event, onBack: () -> Unit, onCheckIn: () -> Unit) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().background(PurpleBackground).statusBarsPadding(),
-        contentPadding = PaddingValues(16.dp, 18.dp, 16.dp, 140.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item { TextButton(onClick = onBack) { Text("Voltar", color = Lime) } }
-        item { Text(event.name, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold) }
-        item { DetailInfoRow("Data", event.eventDate) }
-        item { DetailInfoRow("Local", event.location.orEmpty().ifBlank { "Sem local" }) }
-        item { DetailInfoRow("Descrição", event.description.orEmpty().ifBlank { "Sem descrição" }) }
-        item {
-            Button(
-                onClick = onCheckIn,
-                enabled = !event.checkedIn,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
-                shape = RoundedCornerShape(50)
-            ) { Text(if (event.checkedIn) "Presença confirmada" else "Confirmar presença", fontWeight = FontWeight.Bold) }
+    var mapExpanded by remember(event.id) { mutableStateOf(false) }
+    val lat = event.latitude
+    val lng = event.longitude
+
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().background(PurpleBackground).statusBarsPadding(),
+            contentPadding = PaddingValues(16.dp, 18.dp, 16.dp, 140.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item { TextButton(onClick = onBack) { Text("Voltar", color = Lime) } }
+            item { Text(event.name, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold) }
+            item { DetailInfoRow("Data", event.eventDate) }
+            item { DetailInfoRow("Local", event.location.orEmpty().ifBlank { "Sem local" }) }
+            if (lat != null && lng != null) item {
+                EventLocationMap(
+                    latitude = lat,
+                    longitude = lng,
+                    modifier = Modifier.fillMaxWidth().height(160.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable { mapExpanded = true }
+                )
+            }
+            item { DetailInfoRow("Descrição", event.description.orEmpty().ifBlank { "Sem descrição" }) }
+            item {
+                Button(
+                    onClick = onCheckIn,
+                    enabled = !event.checkedIn,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                    shape = RoundedCornerShape(50)
+                ) { Text(if (event.checkedIn) "Presença confirmada" else "Confirmar presença", fontWeight = FontWeight.Bold) }
+            }
+            item {
+                Text(
+                    when (event.groupStatus) {
+                        "running" -> "A corrida começou. Abrindo o GPS…"
+                        "finished" -> "Corrida finalizada pelo professor."
+                        "checkin" -> if (event.checkedIn) "Presença confirmada. Aguarde o professor iniciar a corrida." else "Confirme sua presença para participar."
+                        else -> "Aguardando o professor iniciar a corrida em grupo."
+                    },
+                    color = if (event.groupStatus == "running") Lime else Color.White.copy(alpha = .65f)
+                )
+            }
         }
-        item {
-            Text(
-                when (event.groupStatus) {
-                    "running" -> "A corrida começou. Abrindo o GPS…"
-                    "finished" -> "Corrida finalizada pelo professor."
-                    "checkin" -> if (event.checkedIn) "Presença confirmada. Aguarde o professor iniciar a corrida." else "Confirme sua presença para participar."
-                    else -> "Aguardando o professor iniciar a corrida em grupo."
-                },
-                color = if (event.groupStatus == "running") Lime else Color.White.copy(alpha = .65f)
-            )
+
+        if (mapExpanded && lat != null && lng != null) {
+            Box(Modifier.fillMaxSize().background(PurpleBackground)) {
+                EventLocationMap(latitude = lat, longitude = lng, modifier = Modifier.fillMaxSize())
+                IconButton(
+                    onClick = { mapExpanded = false },
+                    modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(8.dp)
+                ) { Icon(Icons.Outlined.Close, "Fechar mapa", tint = Color.White) }
+            }
         }
     }
 }
@@ -2338,29 +3024,18 @@ fun StudentSimpleRow(title: String, subtitle: String, icon: androidx.compose.ui.
 fun InstructorSettingsScreen(
     profileName: String,
     profileAvatarUrl: String,
-    pixKey: String,
-    onProfileSave: (String, Uri?) -> Unit,
-    onPixKeyChange: (String) -> Unit,
+    instructorSettings: InstructorSettings,
+    onOpenProfile: () -> Unit,
+    onOpenFinance: () -> Unit,
+    onNotificationsChange: (InstructorSettings) -> Unit,
     onBack: () -> Unit,
     onClearLocalData: () -> Unit,
     showFinancialSection: Boolean = true,
-    profileFieldLabel: String = "Nome exibido",
-    clearDataLabel: String = "Delete meus dados locais",
-    securityDescription: String = "O acesso usa token. Para criar um professor do zero, limpe os dados locais e volte para o cadastro."
+    clearDataLabel: String = "Sair",
+    securityDescription: String = "O acesso usa token. Para criar um professor do zero, saia e volte para o cadastro."
 ) {
-    var draftPix by remember(pixKey) { mutableStateOf(pixKey) }
-    var professorName by remember(profileName) { mutableStateOf(profileName.ifBlank { "Usuario" }) }
-    var selectedPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    var editingProfile by remember { mutableStateOf(false) }
-    var openSection by remember { mutableStateOf("financeiro") }
-    var pushNotifications by remember { mutableStateOf(true) }
-    var emailNotifications by remember { mutableStateOf(true) }
-    var darkMode by remember { mutableStateOf(true) }
-    var compactMode by remember { mutableStateOf(false) }
+    var openSection by remember { mutableStateOf("") }
     var confirmClear by remember { mutableStateOf(false) }
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        selectedPhotoUri = uri
-    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(PurpleDeep).statusBarsPadding(),
@@ -2373,10 +3048,13 @@ fun InstructorSettingsScreen(
             }
         }
         item {
-            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                if (selectedPhotoUri != null || profileAvatarUrl.isNotBlank()) {
+            Column(
+                Modifier.fillMaxWidth().clickable(onClick = onOpenProfile),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (profileAvatarUrl.isNotBlank()) {
                     AsyncImage(
-                        model = selectedPhotoUri ?: profileAvatarUrl,
+                        model = profileAvatarUrl,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.size(92.dp).clip(CircleShape)
@@ -2390,53 +3068,23 @@ fun InstructorSettingsScreen(
                     )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(professorName, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                    Text(profileName.ifBlank { "Usuario" }, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     Icon(
                         Icons.Outlined.Edit,
-                        contentDescription = "Editar",
+                        contentDescription = "Editar perfil",
                         tint = Lime,
-                        modifier = Modifier.padding(start = 6.dp).size(18.dp).clickable { editingProfile = !editingProfile }
+                        modifier = Modifier.padding(start = 6.dp).size(18.dp)
                     )
-                }
-                if (editingProfile) {
-                    Spacer(Modifier.height(10.dp))
-                    FormTextField(professorName, { professorName = it }, profileFieldLabel)
-                    TextButton(onClick = { photoPicker.launch("image/*") }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Escolher foto do dispositivo", color = Lime, fontWeight = FontWeight.Bold)
-                    }
-                    Button(
-                        onClick = {
-                            onProfileSave(professorName, selectedPhotoUri)
-                            editingProfile = false
-                        },
-                        enabled = professorName.length > 1,
-                        modifier = Modifier.fillMaxWidth().height(46.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
-                        shape = RoundedCornerShape(50)
-                    ) {
-                        Text("Salvar perfil", fontWeight = FontWeight.Bold)
-                    }
                 }
             }
         }
         if (showFinancialSection) item {
-            EditableSettingsSection(
+            SettingsListRow(
                 title = "Financeiro",
                 subtitle = "Chave Pix e dados de cobranca",
                 icon = Icons.Outlined.Payments,
-                expanded = openSection == "financeiro",
-                onClick = { openSection = if (openSection == "financeiro") "" else "financeiro" }
-            ) {
-                FormTextField(draftPix, { draftPix = it }, "Chave Pix do professor")
-                Button(
-                    onClick = { onPixKeyChange(draftPix) },
-                    modifier = Modifier.fillMaxWidth().height(46.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
-                    shape = RoundedCornerShape(50)
-                ) {
-                    Text("Salvar financeiro", fontWeight = FontWeight.Bold)
-                }
-            }
+                onClick = onOpenFinance
+            )
         }
         item {
             EditableSettingsSection(
@@ -2446,20 +3094,12 @@ fun InstructorSettingsScreen(
                 expanded = openSection == "notificacoes",
                 onClick = { openSection = if (openSection == "notificacoes") "" else "notificacoes" }
             ) {
-                SettingsSwitchRow("Push no app", pushNotifications) { pushNotifications = it }
-                SettingsSwitchRow("Email de cobranca", emailNotifications) { emailNotifications = it }
-            }
-        }
-        item {
-            EditableSettingsSection(
-                title = "Preferencias",
-                subtitle = "Tema e experiencia",
-                icon = Icons.Outlined.Settings,
-                expanded = openSection == "preferencias",
-                onClick = { openSection = if (openSection == "preferencias") "" else "preferencias" }
-            ) {
-                SettingsSwitchRow("Modo escuro", darkMode) { darkMode = it }
-                SettingsSwitchRow("Listas compactas", compactMode) { compactMode = it }
+                SettingsSwitchRow("Push no app", instructorSettings.notificationPush) {
+                    onNotificationsChange(instructorSettings.copy(notificationPush = it))
+                }
+                SettingsSwitchRow("Email de cobranca", instructorSettings.notificationEmail) {
+                    onNotificationsChange(instructorSettings.copy(notificationEmail = it))
+                }
             }
         }
         item {
@@ -2472,6 +3112,26 @@ fun InstructorSettingsScreen(
             ) {
                 Text(
                     securityDescription,
+                    color = Color.White.copy(alpha = .68f),
+                    fontSize = 12.sp
+                )
+            }
+        }
+        item {
+            EditableSettingsSection(
+                title = "Entrar no site",
+                subtitle = "Painel para computador",
+                icon = Icons.Outlined.QrCode2,
+                expanded = openSection == "site",
+                onClick = { openSection = if (openSection == "site") "" else "site" }
+            ) {
+                Text(
+                    "No computador, abra o site do AgeGo. Depois, aponte a camera do seu celular para o QR Code mostrado na tela de login do site.",
+                    color = Color.White.copy(alpha = .68f),
+                    fontSize = 12.sp
+                )
+                Text(
+                    "Ao reconhecer o codigo, o celular vai abrir o AgeGo e conectar o site automaticamente.",
                     color = Color.White.copy(alpha = .68f),
                     fontSize = 12.sp
                 )
@@ -2492,9 +3152,9 @@ fun InstructorSettingsScreen(
         Dialog(onDismissRequest = { confirmClear = false }) {
             Surface(color = PurpleDeep, shape = RoundedCornerShape(18.dp)) {
                 Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text("Limpar login salvo?", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("Sair da conta?", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Text(
-                        "Isso apaga a sessao salva neste aparelho e volta para a tela inicial para criar um professor do zero.",
+                        "Isso apaga a sessao salva neste aparelho e volta para a tela inicial de login.",
                         color = Color.White.copy(alpha = .68f),
                         fontSize = 13.sp
                     )
@@ -2511,9 +3171,130 @@ fun InstructorSettingsScreen(
                             colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = PurpleDeep),
                             shape = RoundedCornerShape(50)
                         ) {
-                            Text("Limpar", fontWeight = FontWeight.Bold)
+                            Text("Sair", fontWeight = FontWeight.Bold)
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun InstructorProfileScreen(
+    profileName: String,
+    profileAvatarUrl: String,
+    onBack: () -> Unit,
+    onSave: (String, Uri?) -> Unit
+) {
+    var draftName by remember(profileName) { mutableStateOf(profileName.ifBlank { "Usuario" }) }
+    var selectedPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) selectedPhotoUri = uri
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(PurpleDeep).statusBarsPadding(),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(16.dp, 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar", tint = Color.White) }
+            Text("Editar perfil", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
+        }
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier.size(96.dp).clip(CircleShape).clickable { photoPicker.launch("image/*") },
+                contentAlignment = Alignment.Center
+            ) {
+                if (selectedPhotoUri != null || profileAvatarUrl.isNotBlank()) {
+                    AsyncImage(
+                        model = selectedPhotoUri ?: profileAvatarUrl,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                    )
+                } else {
+                    Image(
+                        painter = painterResource(R.drawable.profile),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().clip(CircleShape)
+                    )
+                }
+                Box(
+                    modifier = Modifier.align(Alignment.BottomEnd).size(28.dp).clip(CircleShape).background(Lime),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Outlined.Edit, contentDescription = "Trocar foto", tint = PurpleDeep, modifier = Modifier.size(16.dp))
+                }
+            }
+            Text("Toque na foto para trocar", color = Color.White.copy(alpha = .58f), fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+            Spacer(Modifier.height(16.dp))
+            FormTextField(draftName, { draftName = it.take(80) }, "Nome exibido")
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = { onSave(draftName.trim(), selectedPhotoUri) },
+                enabled = draftName.trim().length > 1,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                shape = RoundedCornerShape(50)
+            ) {
+                Text("Salvar perfil", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun InstructorFinanceScreen(
+    settings: InstructorSettings,
+    onBack: () -> Unit,
+    onSave: (InstructorSettings) -> Unit
+) {
+    var draft by remember(settings) { mutableStateOf(settings) }
+
+    Column(modifier = Modifier.fillMaxSize().background(PurpleDeep).statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(16.dp, 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar", tint = Color.White) }
+            Text("Financeiro", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp, 0.dp, 16.dp, 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Text("Dados do Pix", color = Color.White.copy(alpha = .72f), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+            item { FormTextField(draft.pixKey, { draft = draft.copy(pixKey = it.take(140)) }, "Chave Pix") }
+            item { FormTextField(draft.pixOwnerName, { draft = draft.copy(pixOwnerName = it.take(255)) }, "Nome do titular") }
+            item { FormTextField(draft.pixDocument, { draft = draft.copy(pixDocument = it.filter(Char::isDigit).take(14)) }, "CPF ou CNPJ do titular") }
+            item {
+                Text(
+                    "Endereco de cobranca",
+                    color = Color.White.copy(alpha = .72f),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+            item { FormTextField(draft.addressZipCode, { draft = draft.copy(addressZipCode = it.filter(Char::isDigit).take(8)) }, "CEP") }
+            item { FormTextField(draft.addressStreet, { draft = draft.copy(addressStreet = it.take(255)) }, "Rua") }
+            item { FormTextField(draft.addressNumber, { draft = draft.copy(addressNumber = it.take(20)) }, "Numero") }
+            item { FormTextField(draft.addressNeighborhood, { draft = draft.copy(addressNeighborhood = it.take(255)) }, "Bairro") }
+            item { FormTextField(draft.addressCity, { draft = draft.copy(addressCity = it.take(100)) }, "Cidade") }
+            item { FormTextField(draft.addressState, { draft = draft.copy(addressState = it.uppercase().filter(Char::isLetter).take(2)) }, "UF") }
+            item {
+                Button(
+                    onClick = { onSave(draft) },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
+                    shape = RoundedCornerShape(50)
+                ) {
+                    Text("Salvar financeiro", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -2553,7 +3334,13 @@ fun SettingsSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean
 }
 
 @Composable
-fun SettingsListRow(title: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit = {}) {
+fun SettingsListRow(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    showAlert: Boolean = false,
+    onClick: () -> Unit = {}
+) {
     Surface(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, contentDescription = null, tint = Lime, modifier = Modifier.size(24.dp))
@@ -2561,6 +3348,7 @@ fun SettingsListRow(title: String, subtitle: String, icon: androidx.compose.ui.g
                 Text(title, color = Color.White, fontWeight = FontWeight.Bold)
                 Text(subtitle, color = Color.White.copy(alpha = .58f), fontSize = 12.sp)
             }
+            if (showAlert) PaymentWarningBadge(Modifier.size(20.dp), 13.sp)
             Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null, tint = Color.White.copy(alpha = .72f), modifier = Modifier.size(18.dp))
         }
     }

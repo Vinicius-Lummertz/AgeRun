@@ -3,9 +3,21 @@
   "type": "module",
   "scripts": {
     "supabase:apply": "node tools/apply-supabase-sql.mjs",
-    "supabase:check": "node tools/check-supabase-schema.mjs"
+    "supabase:check": "node tools/check-supabase-schema.mjs",
+    "server": "node remote-server.js",
+    "web": "node web-dashboard-server.js"
   },
   "dependencies": {
-    "pg": "^8.16.3"
+    "@supabase/supabase-js": "^2.45.4",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ejs": "^3.1.10",
+    "express": "^4.19.2",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "pg": "^8.16.3",
+    "qrcode": "^1.5.4",
+    "zod": "^3.23.8"
   }
 }

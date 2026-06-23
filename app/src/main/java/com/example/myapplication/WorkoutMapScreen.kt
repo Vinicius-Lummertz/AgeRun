@@ -11,12 +11,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -114,7 +115,7 @@ fun WorkoutTrackingMapScreen(
         )
 
         Surface(
-            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(16.dp),
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding().padding(16.dp),
             color = Color.Black.copy(alpha = 0.72f),
             shape = RoundedCornerShape(22.dp)
         ) {
@@ -157,7 +158,7 @@ fun WorkoutTrackingMapScreen(
                         onClick = onToggleRunning,
                         modifier = Modifier.size(62.dp).background(Lime, CircleShape)
                     ) {
-                        Icon(if (running) Icons.Outlined.Pause else Icons.Outlined.PlayArrow, if (running) "Pausar" else "Continuar", tint = Color.Black, modifier = Modifier.size(32.dp))
+                        Icon(if (running) Icons.Outlined.Stop else Icons.Outlined.PlayArrow, if (running) "Encerrar corrida" else "Comecar", tint = Color.Black, modifier = Modifier.size(32.dp))
                     }
                     Button(
                         onClick = onNext,
@@ -190,6 +191,7 @@ private fun WorkoutRouteMap(points: List<WorkoutRoutePoint>, modifier: Modifier 
     }
     var map by remember { mutableStateOf<MapLibreMap?>(null) }
     var styleReady by remember { mutableStateOf(false) }
+    val cleanPoints = remember(points) { cleanRoutePoints(points) }
 
     AndroidView(factory = { mapView }, modifier = modifier)
 
@@ -218,10 +220,19 @@ private fun WorkoutRouteMap(points: List<WorkoutRoutePoint>, modifier: Modifier 
         }
     }
 
-    LaunchedEffect(points, map, styleReady) {
+    // Antes do primeiro ponto de GPS da corrida, centraliza no fix "morno" do LiveLocationCache
+    // para nao abrir o mapa descentralizado enquanto a corrida ainda nao tem rota propria.
+    LaunchedEffect(map, styleReady, cleanPoints.isEmpty(), LiveLocationCache.location) {
         val readyMap = map ?: return@LaunchedEffect
-        if (!styleReady || points.isEmpty()) return@LaunchedEffect
-        val coordinates = points.map { Point.fromLngLat(it.lon, it.lat) }
+        if (!styleReady || cleanPoints.isNotEmpty()) return@LaunchedEffect
+        val cached = LiveLocationCache.location ?: return@LaunchedEffect
+        readyMap.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(cached.latitude, cached.longitude), 16.5))
+    }
+
+    LaunchedEffect(cleanPoints, map, styleReady) {
+        val readyMap = map ?: return@LaunchedEffect
+        if (!styleReady || cleanPoints.isEmpty()) return@LaunchedEffect
+        val coordinates = cleanPoints.map { Point.fromLngLat(it.lon, it.lat) }
         readyMap.getStyle { style ->
             if (coordinates.size >= 2) {
                 val source = style.getSourceAs<GeoJsonSource>(ROUTE_SOURCE)
@@ -236,7 +247,7 @@ private fun WorkoutRouteMap(points: List<WorkoutRoutePoint>, modifier: Modifier 
                     source.setGeoJson(LineString.fromLngLats(coordinates))
                 }
             }
-            points.lastOrNull()?.let { last ->
+            cleanPoints.lastOrNull()?.let { last ->
                 val currentPoint = Point.fromLngLat(last.lon, last.lat)
                 val positionSource = style.getSourceAs<GeoJsonSource>(POSITION_SOURCE)
                 if (positionSource == null) {
@@ -302,9 +313,10 @@ fun MultiRouteMap(routes: List<Pair<String, List<WorkoutRoutePoint>>>, modifier:
         readyMap.getStyle { style ->
             val allPoints = mutableListOf<LatLng>()
             routes.forEachIndexed { index, (studentId, points) ->
-                if (points.size < 2) return@forEachIndexed
-                val coordinates = points.map { Point.fromLngLat(it.lon, it.lat) }
-                allPoints += points.map { LatLng(it.lat, it.lon) }
+                val cleanPoints = cleanRoutePoints(points)
+                if (cleanPoints.size < 2) return@forEachIndexed
+                val coordinates = cleanPoints.map { Point.fromLngLat(it.lon, it.lat) }
+                allPoints += cleanPoints.map { LatLng(it.lat, it.lon) }
                 val sourceId = "$ROUTE_SOURCE-$studentId"
                 val layerId = "$ROUTE_LAYER-$studentId"
                 val color = ROUTE_PALETTE[index % ROUTE_PALETTE.size]

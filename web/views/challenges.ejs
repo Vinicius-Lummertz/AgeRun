@@ -1,0 +1,65 @@
+<%- include('partials/head', { title: 'Desafios', active: 'challenges' }) %>
+
+<h1 class="page-title">Desafios</h1>
+<p class="page-subtitle"><%= challenges.length %> desafio(s)</p>
+
+<details class="section">
+  <summary class="toggle-link">+ Novo desafio</summary>
+  <form class="form-card" method="post" action="/challenges" style="margin-top:14px">
+    <div><label>Nome</label><input name="name" required /></div>
+    <div><label>Descrição</label><textarea name="description"></textarea></div>
+    <div class="form-row">
+      <div>
+        <label>Tipo de meta</label>
+        <select name="targetType">
+          <option value="distance">Distância (km)</option>
+          <option value="time">Tempo (min)</option>
+        </select>
+      </div>
+      <div><label>Valor da meta</label><input name="targetValue" type="number" step="0.1" required /></div>
+    </div>
+    <button class="btn btn-primary" type="submit" style="align-self:flex-start">Criar desafio</button>
+  </form>
+</details>
+
+<div class="section">
+  <% if (challenges.length === 0) { %>
+    <div class="empty-state">Nenhum desafio criado ainda.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Nome</th><th>Meta</th><th>Concluíram</th><th>Distância total</th><th></th></tr></thead>
+      <tbody>
+        <% challenges.forEach((c) => { %>
+          <tr>
+            <td><%= c.name %></td>
+            <td><%= c.target_value %> <%= c.target_type === 'distance' ? 'km' : 'min' %></td>
+            <td><%= c.completions %></td>
+            <td><%= (c.totalDistanceMeters / 1000).toFixed(1) %> km</td>
+            <td>
+              <details>
+                <summary class="toggle-link">Editar</summary>
+                <form class="form-card" method="post" action="/challenges/<%= c.id %>/edit" style="margin-top:10px;min-width:280px">
+                  <div><label>Nome</label><input name="name" value="<%= c.name %>" required /></div>
+                  <div><label>Descrição</label><textarea name="description"><%= c.description %></textarea></div>
+                  <select name="targetType">
+                    <option value="distance" <%= c.target_type === 'distance' ? 'selected' : '' %>>Distância (km)</option>
+                    <option value="time" <%= c.target_type === 'time' ? 'selected' : '' %>>Tempo (min)</option>
+                  </select>
+                  <input name="targetValue" type="number" step="0.1" value="<%= c.target_value %>" required />
+                  <div class="row-actions">
+                    <button class="btn btn-primary" type="submit">Salvar</button>
+                  </div>
+                </form>
+              </details>
+              <form method="post" action="/challenges/<%= c.id %>/delete" onsubmit="return confirm('Excluir este desafio?')" style="margin-top:6px">
+                <button class="btn btn-danger" type="submit">Excluir</button>
+              </form>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<%- include('partials/footer') %>

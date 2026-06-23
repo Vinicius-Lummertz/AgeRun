@@ -1,0 +1,109 @@
+<%- include('partials/head', { title: student.users?.name || 'Aluno', active: 'students' }) %>
+
+<a class="back-link" href="/students">&larr; Voltar para alunos</a>
+<h1 class="page-title"><%= student.users?.name || 'Aluno' %></h1>
+<p class="page-subtitle"><%= student.planName %></p>
+
+<div class="metric-row">
+  <div class="metric">
+    <div class="label">Status de pagamento</div>
+    <div class="value">
+      <% if (student.cycle.paymentStatus === 'paid') { %>Pago
+      <% } else if (student.cycle.daysOverdue > 4) { %><%= student.cycle.daysOverdue %> dias de atraso
+      <% } else { %>Pendente<% } %>
+    </div>
+  </div>
+  <div class="metric">
+    <div class="label">Dia de pagamento</div>
+    <div class="value">Todo dia <%= student.billing_day || 5 %></div>
+  </div>
+  <div class="metric">
+    <div class="label">Mensalidade</div>
+    <div class="value">R$ <%= student.monthly_fee || '—' %></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Editar dados</h2>
+  <form class="form-card" method="post" action="/students/<%= student.id %>/edit">
+    <input type="hidden" name="billingDay" value="<%= student.billing_day || 5 %>" />
+    <div class="form-row">
+      <div><label>Nome</label><input name="name" value="<%= student.users?.name || '' %>" required /></div>
+      <div><label>Telefone</label><input name="phone" value="<%= student.users?.phone || '' %>" /></div>
+    </div>
+    <div class="form-row">
+      <div><label>Plano / rotina (nome ou id)</label><input name="routine" value="<%= student.goal || '' %>" /></div>
+      <div><label>Mensalidade (R$)</label><input name="monthlyFee" value="<%= student.monthly_fee || '' %>" /></div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>Status</label>
+        <select name="status">
+          <option value="active" <%= student.status === 'active' ? 'selected' : '' %>>Ativo</option>
+          <option value="pending_payment" <%= student.status === 'pending_payment' ? 'selected' : '' %>>Pendente</option>
+          <option value="inactive" <%= student.status === 'inactive' ? 'selected' : '' %>>Inativo</option>
+        </select>
+      </div>
+    </div>
+    <p style="color:rgba(255,255,255,.5);font-size:11px">O dia de pagamento (<%= student.billing_day || 5 %>) é escolhido pelo próprio aluno no app e não é alterado aqui.</p>
+    <button class="btn btn-primary" type="submit" style="align-self:flex-start">Salvar alterações</button>
+  </form>
+</div>
+
+<div class="section">
+  <h2>Contato</h2>
+  <table>
+    <tr><td style="width:140px;color:rgba(255,255,255,.55)">E-mail</td><td><%= student.users?.email || '—' %></td></tr>
+    <tr><td style="color:rgba(255,255,255,.55)">Telefone</td><td><%= student.users?.phone || '—' %></td></tr>
+  </table>
+</div>
+
+<% if (student.payment_proof_url) { %>
+<div class="section">
+  <h2>Comprovante enviado</h2>
+  <p><a href="<%= student.payment_proof_url %>" target="_blank" rel="noopener">Abrir comprovante</a></p>
+  <% if (student.payment_proof_rejection_reason) { %>
+    <p style="color:#FF8A65">Motivo da última rejeição: <%= student.payment_proof_rejection_reason %></p>
+  <% } %>
+  <div class="row-actions" style="margin-top:10px">
+    <form method="post" action="/students/<%= student.id %>/approve-payment">
+      <button class="btn btn-primary" type="submit">Aprovar pagamento</button>
+    </form>
+    <form method="post" action="/students/<%= student.id %>/reject-payment" style="display:flex;gap:8px;align-items:center">
+      <input name="reason" placeholder="Motivo da rejeição" style="background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:8px 12px;color:#fff" />
+      <button class="btn btn-danger" type="submit">Rejeitar</button>
+    </form>
+  </div>
+</div>
+<% } %>
+
+<div class="section">
+  <h2>Histórico de treinos</h2>
+  <% if (sessions.length === 0) { %>
+    <div class="empty-state">Nenhum treino registrado ainda.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Treino</th><th>Distância</th><th>Tempo</th><th>Quando</th></tr></thead>
+      <tbody>
+        <% sessions.forEach((s) => { %>
+          <tr>
+            <td><%= s.routine_name || 'Corrida livre' %></td>
+            <td><%= (Number(s.distance_meters || 0) / 1000).toFixed(2) %> km</td>
+            <td><%= Math.round(Number(s.elapsed_ms || 0) / 60000) %> min</td>
+            <td><%= new Date(s.completed_at).toLocaleString('pt-BR') %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<div class="section">
+  <h2 style="color:#FF6B7A">Excluir aluno</h2>
+  <p style="color:rgba(255,255,255,.55);font-size:12px">Essa ação não pode ser desfeita.</p>
+  <form method="post" action="/students/<%= student.id %>/delete" onsubmit="return confirm('Excluir este aluno definitivamente?')">
+    <button class="btn btn-danger" type="submit">Excluir aluno</button>
+  </form>
+</div>
+
+<%- include('partials/footer') %>

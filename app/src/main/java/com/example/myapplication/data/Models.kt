@@ -23,7 +23,8 @@ data class Student(
     val paymentStatus: String = "paid",
     val daysOverdue: Int = 0,
     val paymentProofUrl: String? = null,
-    val paymentProofRejectionReason: String? = null
+    val paymentProofRejectionReason: String? = null,
+    val asaasSubscriptionActive: Boolean = false
 )
 
 @Serializable

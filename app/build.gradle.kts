@@ -87,6 +87,7 @@ dependencies {
     implementation(libs.ktor.client.android)
     implementation(libs.coil.compose)
     implementation(libs.zxing.core)
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)

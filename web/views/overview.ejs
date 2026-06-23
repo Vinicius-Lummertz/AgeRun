@@ -1,0 +1,97 @@
+<%- include('partials/head', { title: 'Visão geral', active: 'overview' }) %>
+
+<h1 class="page-title">Olá, <%= profile?.name || 'treinador' %></h1>
+<p class="page-subtitle">Resumo do seu dia</p>
+
+<div class="cards-row">
+  <div class="card">
+    <div class="label">Alunos</div>
+    <div class="value"><%= totalStudents %></div>
+  </div>
+  <div class="card">
+    <div class="label">Pagamentos pendentes</div>
+    <div class="value warn"><%= pendingCount %></div>
+  </div>
+  <div class="card">
+    <div class="label">Atrasados (4+ dias)</div>
+    <div class="value warn"><%= overdueCount %></div>
+  </div>
+  <div class="card">
+    <div class="label">Eventos hoje</div>
+    <div class="value lime"><%= todayEvents.length %></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Eventos de hoje</h2>
+  <% if (todayEvents.length === 0) { %>
+    <div class="empty-state">Nenhum evento hoje.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Nome</th><th>Local</th><th>Horário</th></tr></thead>
+      <tbody>
+        <% todayEvents.forEach((event) => { %>
+          <tr class="clickable" onclick="window.location.href='/events/<%= event.id %>'">
+            <td><%= event.name %></td>
+            <td><%= event.location || '—' %></td>
+            <td><%= new Date(event.event_date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<div class="section">
+  <h2>Últimos treinos concluídos</h2>
+  <% if (recentSessions.length === 0) { %>
+    <div class="empty-state">Nenhum treino concluído ainda.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Aluno</th><th>Treino</th><th>Distância</th><th>Quando</th></tr></thead>
+      <tbody>
+        <% recentSessions.forEach((s) => { %>
+          <tr>
+            <td><%= s.student_profiles?.users?.name || 'Aluno' %></td>
+            <td><%= s.routine_name || 'Corrida livre' %></td>
+            <td><%= (Number(s.distance_meters || 0) / 1000).toFixed(2) %> km</td>
+            <td><%= new Date(s.completed_at).toLocaleString('pt-BR') %></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<% if (pendingProofs.length > 0) { %>
+<div class="section">
+  <h2>Comprovantes de pagamento para revisar</h2>
+  <table>
+    <thead><tr><th>Aluno</th><th></th><th></th></tr></thead>
+    <tbody>
+      <% pendingProofs.forEach((p) => { %>
+        <tr>
+          <td><a href="/students/<%= p.id %>"><%= p.users?.name || 'Aluno' %></a></td>
+          <td><a href="<%= p.payment_proof_url %>" target="_blank" rel="noopener">Ver comprovante</a></td>
+          <td>
+            <form method="post" action="/students/<%= p.id %>/approve-payment">
+              <input type="hidden" name="redirectTo" value="/" />
+              <button class="btn btn-primary" type="submit">Aprovar</button>
+            </form>
+          </td>
+        </tr>
+      <% }) %>
+    </tbody>
+  </table>
+</div>
+<% } %>
+
+<div class="section">
+  <h2>Publicar aviso</h2>
+  <form class="form-card" method="post" action="/announcements">
+    <textarea name="content" placeholder="Escreva um aviso para todos os alunos" required></textarea>
+    <button class="btn btn-primary" type="submit" style="align-self:flex-start">Publicar</button>
+  </form>
+</div>
+
+<%- include('partials/footer') %>

@@ -22,6 +22,8 @@ import java.util.UUID
 
 private const val SYNC_WORK_NAME = "agego-offline-sync"
 private const val MUTATION_WORKOUT_SESSION = "workout_session"
+private const val MUTATION_EVENT_CHECKIN = "event_checkin"
+private const val MUTATION_EVENT_RUN_RESULT = "event_run_result"
 
 /** Room-backed cache plus an outbox for operations that must survive process death. */
 class OfflineFirstAgeGoRepository private constructor(
@@ -76,6 +78,49 @@ class OfflineFirstAgeGoRepository private constructor(
         scheduleSync(context)
     }
 
+    override suspend fun checkInEvent(eventId: String) {
+        if (isOnline()) {
+            try {
+                remote.checkInEvent(eventId)
+                return
+            } catch (error: IOException) {
+                // Persist below and retry with WorkManager.
+            }
+        }
+        val userId = requireUserId()
+        withContext(Dispatchers.IO) {
+            val id = UUID.randomUUID().toString()
+            dao.enqueue(PendingMutationEntity(id, userId, MUTATION_EVENT_CHECKIN, eventId, System.currentTimeMillis(), 0))
+        }
+        scheduleSync(context)
+    }
+
+    override suspend fun saveEventRunResult(eventId: String, session: WorkoutSessionPayload) {
+        if (isOnline()) {
+            try {
+                remote.saveEventRunResult(eventId, session)
+                return
+            } catch (error: IOException) {
+                // Persist below and retry with WorkManager.
+            }
+        }
+        val userId = requireUserId()
+        withContext(Dispatchers.IO) {
+            val id = UUID.randomUUID().toString()
+            dao.enqueue(
+                PendingMutationEntity(
+                    id,
+                    userId,
+                    MUTATION_EVENT_RUN_RESULT,
+                    json.encodeToString(EventRunResultPayload(eventId, session)),
+                    System.currentTimeMillis(),
+                    0
+                )
+            )
+        }
+        scheduleSync(context)
+    }
+
     /** Returns false only when retrying later is useful. Invalid server data remains queued for inspection. */
     suspend fun flushPending(): Boolean {
         val userId = remote.restoreSession()?.id ?: return true
@@ -85,6 +130,11 @@ class OfflineFirstAgeGoRepository private constructor(
             try {
                 when (mutation.type) {
                     MUTATION_WORKOUT_SESSION -> remote.saveWorkoutSession(json.decodeFromString(mutation.payload))
+                    MUTATION_EVENT_CHECKIN -> remote.checkInEvent(mutation.payload)
+                    MUTATION_EVENT_RUN_RESULT -> {
+                        val data = json.decodeFromString<EventRunResultPayload>(mutation.payload)
+                        remote.saveEventRunResult(data.eventId, data.session)
+                    }
                 }
                 withContext(Dispatchers.IO) { dao.deleteMutation(mutation.id) }
             } catch (error: AuthRequiredException) {
@@ -118,6 +168,9 @@ class OfflineFirstAgeGoRepository private constructor(
         dao.saveDashboard(CachedDashboardEntity(userId, json.encodeToString(dashboard.offlineSnapshot()), System.currentTimeMillis()))
     }
 }
+
+@kotlinx.serialization.Serializable
+private data class EventRunResultPayload(val eventId: String, val session: WorkoutSessionPayload)
 
 private fun DashboardData.offlineSnapshot() = copy(
     // Presence is momentary; showing an old "training now" state would be misleading.

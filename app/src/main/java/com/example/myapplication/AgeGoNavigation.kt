@@ -154,6 +154,7 @@ import com.example.myapplication.data.DirectoryItem
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.Workout
 import com.example.myapplication.data.Event
+import com.example.myapplication.data.InstructorSettings
 import com.example.myapplication.ui.AgeGoUiState
 import com.example.myapplication.ui.AgeGoViewModel
 import com.example.myapplication.ui.theme.AgeGoTheme
@@ -194,10 +195,24 @@ val studentDestinations = listOf(
 )
 
 @Composable
-fun AgeGoApp(viewModel: AgeGoViewModel = viewModel(), initialEventId: String? = null) {
+fun AgeGoApp(
+    viewModel: AgeGoViewModel = viewModel(),
+    initialEventId: String? = null,
+    initialWebPairToken: String? = null,
+    onWebPairTokenConsumed: () -> Unit = {},
+    initialStudentAccessPhone: String? = null,
+    initialStudentAccessCode: String? = null,
+    initialInviteCode: String? = null
+) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val session = state.authSession
     val context = LocalContext.current
+    LaunchedEffect(initialWebPairToken, session?.id) {
+        if (!initialWebPairToken.isNullOrBlank() && session != null) {
+            viewModel.confirmWebPairing(initialWebPairToken)
+            onWebPairTokenConsumed()
+        }
+    }
     if (session == null) {
         RealAuthScreen(
             loading = state.authLoading,
@@ -212,9 +227,15 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel(), initialEventId: String? = 
                 viewModel.verifyInstructor(context, email, token, displayName, photoUri, onSuccess, onFailure)
             },
             onStartStudent = { phone, onToken -> viewModel.startStudentFirstAccess(phone, onToken) },
-            onCompleteStudent = { phone, email, nickname, photoUri, frequencyDays, token ->
-                viewModel.completeStudentFirstAccess(phone, email, nickname, photoUri, frequencyDays, token, context) {}
-            }
+            onCompleteStudent = { phone, email, nickname, photoUri, frequencyDays, billingDay, token ->
+                viewModel.completeStudentFirstAccess(phone, email, nickname, photoUri, frequencyDays, billingDay, token, context) {}
+            },
+            onCompleteInviteStudent = { inviteCode, phone, email, nickname, photoUri, frequencyDays, billingDay ->
+                viewModel.registerStudentViaInvite(inviteCode, phone, email, nickname, photoUri, frequencyDays, billingDay, context) {}
+            },
+            initialStudentPhone = initialStudentAccessPhone,
+            initialStudentAccessToken = initialStudentAccessCode,
+            initialInviteCode = initialInviteCode
         )
         return
     }
@@ -230,6 +251,22 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel(), initialEventId: String? = 
             onRefresh = viewModel::refresh,
             onUploadMedia = { uri -> viewModel.uploadMedia(context, uri) },
             onSubmitPaymentProof = viewModel::submitPaymentProof,
+            onUpdateBillingDay = viewModel::updateBillingDay,
+            onPayPix = { cpf ->
+                kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                    viewModel.payMonthlyFeeWithPix(cpf) { result ->
+                        cont.resumeWith(Result.success(result))
+                    }
+                }
+            },
+            onSubscribeCard = { cpf, postalCode, addressNumber, card ->
+                kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                    viewModel.subscribeMonthlyFeeWithCard(cpf, postalCode, addressNumber, card) { result ->
+                        cont.resumeWith(Result.success(result))
+                    }
+                }
+            },
+            onCancelSubscription = viewModel::cancelCardSubscription,
             onLogout = viewModel::logout,
             onClearMessage = viewModel::clearMessage
         )
@@ -304,11 +341,33 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel(), initialEventId: String? = 
                 InstructorSettingsScreen(
                     profileName = state.authSession?.name.orEmpty(),
                     profileAvatarUrl = state.authSession?.avatarUrl.orEmpty(),
-                    pixKey = state.instructorSettings.pixKey,
-                    onProfileSave = { name, uri -> viewModel.saveProfile(context, name, uri) },
-                    onPixKeyChange = { viewModel.saveInstructorSettings(state.instructorSettings.copy(pixKey = it)) },
+                    instructorSettings = state.instructorSettings,
+                    onOpenProfile = { navController.navigate("settings/perfil") },
+                    onOpenFinance = { navController.navigate("settings/financeiro") },
+                    onNotificationsChange = { viewModel.saveInstructorSettings(it) },
                     onBack = navController::popBackStack,
                     onClearLocalData = viewModel::logout
+                )
+            }
+            composable("settings/perfil") {
+                InstructorProfileScreen(
+                    profileName = state.authSession?.name.orEmpty(),
+                    profileAvatarUrl = state.authSession?.avatarUrl.orEmpty(),
+                    onBack = navController::popBackStack,
+                    onSave = { name, uri ->
+                        viewModel.saveProfile(context, name, uri)
+                        navController.popBackStack()
+                    }
+                )
+            }
+            composable("settings/financeiro") {
+                InstructorFinanceScreen(
+                    settings = state.instructorSettings,
+                    onBack = navController::popBackStack,
+                    onSave = {
+                        viewModel.saveInstructorSettings(it)
+                        navController.popBackStack()
+                    }
                 )
             }
             composable("eventos") {
@@ -326,6 +385,7 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel(), initialEventId: String? = 
                     loading = state.isLoading,
                     onBack = navController::popBackStack,
                     onNewStudent = { navController.navigate("student/new") },
+                    onRequestInviteCode = { onCode -> viewModel.getInviteLink(onCode) },
                     onStudentClick = { navController.navigate("student/${it.id}") }
                 )
             }
@@ -334,23 +394,31 @@ fun AgeGoApp(viewModel: AgeGoViewModel = viewModel(), initialEventId: String? = 
                 NewStudentFlowScreen(
                     workouts = state.workouts,
                     onBack = navController::popBackStack,
-                    onSave = { student, customWorkout, onComplete ->
+                    onSave = { student, customWorkout, onComplete, onError ->
                         val saveStudent: (Student) -> Unit = { studentToSave ->
-                            viewModel.saveStudent(studentToSave) { saved ->
-                            if (saved.accessCode.isNotBlank()) {
-                                Toast.makeText(
-                                    context,
-                                    "Codigo do aluno: ${saved.accessCode}. Valido por 24h.",
-                                    Toast.LENGTH_LONG
-                                ).show()
-                            }
-                            onComplete()
-                            }
+                            viewModel.saveStudent(
+                                studentToSave,
+                                onSaved = { saved ->
+                                    if (saved.accessCode.isNotBlank()) {
+                                        Toast.makeText(
+                                            context,
+                                            "Codigo do aluno: ${saved.accessCode}. Valido por 24h.",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                    onComplete()
+                                },
+                                onError = onError
+                            )
                         }
                         if (customWorkout != null) {
-                            viewModel.saveWorkout(customWorkout) { savedWorkout ->
-                                saveStudent(student.copy(routine = savedWorkout.id, planName = savedWorkout.name))
-                            }
+                            viewModel.saveWorkout(
+                                customWorkout,
+                                onSaved = { savedWorkout ->
+                                    saveStudent(student.copy(routine = savedWorkout.id, planName = savedWorkout.name))
+                                },
+                                onError = onError
+                            )
                         } else saveStudent(student)
                     }
                 )

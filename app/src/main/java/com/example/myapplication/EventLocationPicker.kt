@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -149,5 +150,52 @@ fun EventLocationPicker(
         if (latitude != null && longitude != null) {
             map?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(latitude, longitude), 16.0), 500)
         }
+    }
+}
+
+@Composable
+fun EventLocationMap(
+    latitude: Double,
+    longitude: Double,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val mapView = remember {
+        MapLibre.getInstance(context)
+        MapView(context).also { it.onCreate(null) }
+    }
+    var map by remember { mutableStateOf<org.maplibre.android.maps.MapLibreMap?>(null) }
+
+    Box(modifier, contentAlignment = Alignment.Center) {
+        AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+        Icon(Icons.Outlined.LocationOn, "Local do evento", tint = Lime, modifier = Modifier.size(36.dp))
+    }
+
+    DisposableEffect(mapView, lifecycle) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> mapView.onStart()
+                Lifecycle.Event.ON_RESUME -> mapView.onResume()
+                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
+                Lifecycle.Event.ON_STOP -> mapView.onStop()
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        mapView.getMapAsync { readyMap ->
+            map = readyMap
+            readyMap.setStyle(Style.Builder().fromJson(EVENT_OSM_STYLE)) {
+                readyMap.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(latitude, longitude), 16.0))
+            }
+        }
+        onDispose {
+            lifecycle.removeObserver(observer)
+            mapView.onPause(); mapView.onStop(); mapView.onDestroy()
+        }
+    }
+
+    LaunchedEffect(latitude, longitude, map) {
+        map?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(latitude, longitude), 16.0), 500)
     }
 }

@@ -1,6 +1,5 @@
 ﻿package com.example.myapplication
 
-import android.app.DatePickerDialog
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -78,7 +77,6 @@ import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.GifBox
-import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.InsertEmoticon
@@ -154,6 +152,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.myapplication.BuildConfig
 import com.example.myapplication.data.Announcement
 import com.example.myapplication.data.Student
 import com.example.myapplication.data.Workout
@@ -340,7 +339,7 @@ fun StudentDetailScreen(
                 if (editing) {
                     item { DetailInfoRow("Dados pessoais", "Comece pelo essencial. O aluno completa foto e email no primeiro acesso.") }
                     item { FormTextField(name, { name = it }, "Nome") }
-                    item { FormTextField(phone, { phone = it }, "Telefone") }
+                    item { FormTextField(phone, { phone = it }, "Telefone", maxLength = 20) }
                     if (student != null) {
                         item {
                             DetailInfoRow(
@@ -380,6 +379,35 @@ fun StudentDetailScreen(
                                         Text("PIN de primeiro acesso", color = Color.White.copy(alpha = .64f), fontSize = 12.sp)
                                         Text(student.accessCode, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                                         Text("Toque para copiar • válido por 24 horas", color = Lime, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                        item {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().clickable {
+                                    val accessLink = "${BuildConfig.AGEGO_API_URL.trimEnd('/')}/student-access/${Uri.encode(student.phone)}/${student.accessCode}"
+                                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Link de acesso do aluno", accessLink))
+                                    val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(android.content.Intent.EXTRA_TEXT, "Complete seu cadastro no AgeGo: $accessLink")
+                                    }
+                                    context.startActivity(android.content.Intent.createChooser(shareIntent, "Enviar link de acesso"))
+                                },
+                                color = PurpleSurface,
+                                shape = RoundedCornerShape(20.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(18.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                ) {
+                                    Icon(Icons.Outlined.Share, contentDescription = null, tint = Lime)
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Link de acesso do aluno", color = Color.White.copy(alpha = .64f), fontSize = 12.sp)
+                                        Text("Enviar para o aluno preencher os dados", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("Copiado e pronto para compartilhar • válido por 24 horas", color = Lime, fontSize = 11.sp)
                                     }
                                 }
                             }
@@ -440,7 +468,16 @@ fun StudentDetailScreen(
                     item {
                         DetailInfoRow("Valor mensal", formatMoneyLabel(routineMonthlyFee.ifBlank { student?.monthlyFee.orEmpty() }))
                     }
-                    item { BillingDayPicker(billingDayInt) { billingDay = it.toString() } }
+                    item {
+                        DetailInfoRow(
+                            "Dia de pagamento",
+                            if (student?.billingDay != null) {
+                                "Escolhido pelo aluno: vence todo dia ${student.billingDay}."
+                            } else {
+                                "O proprio aluno escolhe o dia de pagamento no primeiro acesso ou no financeiro do app."
+                            }
+                        )
+                    }
                 } else {
                     item {
                         BillingSummaryCard(
@@ -1011,10 +1048,10 @@ fun SaveButton(enabled: Boolean, onClick: () -> Unit) {
     }
 }
 @Composable
-fun FormTextField(value: String, onValueChange: (String) -> Unit, label: String) {
+fun FormTextField(value: String, onValueChange: (String) -> Unit, label: String, maxLength: Int = 255) {
     TextField(
         value = value,
-        onValueChange = onValueChange,
+        onValueChange = { if (it.length <= maxLength) onValueChange(it) },
         modifier = Modifier.fillMaxWidth(),
         label = { Text(label) },
         shape = RoundedCornerShape(14.dp),

@@ -279,117 +279,53 @@ fun HomeScreenV2(state: AgeGoUiState, navigate: (String) -> Unit) {
                         ) {
                             ShortcutCircleSvg("Alunos", R.drawable.ic_option_alunos) { navigate("students") }
                             ShortcutCircleSvg("Treinos", R.drawable.ic_option_treinos) { navigate("workouts") }
+                            ShortcutCircle("Avisos", Icons.Outlined.Campaign) { navigate("announcements") }
+                            ShortcutCircle("Desafios", Icons.Outlined.Flag) { navigate("challenges") }
                         }
                     }
                     item {
                         Text("Monitoramento", fontSize = 18.sp, fontWeight = FontWeight.Normal)
                     }
-                    item {
-                        Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
-                            Text(
-                                "Nenhum atalho definido ainda.",
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                    if (state.instructorSettings.pixKey.isBlank()) {
+                        item {
+                            Surface(
+                                modifier = Modifier.fillMaxWidth().clickable { navigate("settings") },
+                                color = PurpleBackground,
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Icon(Icons.Outlined.Payments, contentDescription = null, tint = Lime)
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Cadastre sua chave Pix", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                        Text(
+                                            "Sem ela, os pagamentos dos alunos via Pix/cartão não chegam até você. Toque para configurar.",
+                                            color = Color.White.copy(alpha = .65f),
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                    Icon(Icons.AutoMirrored.Outlined.ArrowForward, contentDescription = null, tint = Color.White.copy(alpha = .5f))
+                                }
+                            }
+                        }
+                    } else {
+                        item {
+                            Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
+                                Text(
+                                    "Nenhum atalho definido ainda.",
+                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
                 if (state.isLoading) item { LoadingBox() }
             }
         }
-    }
-}
-
-@Composable
-fun HomeScreen(state: AgeGoUiState, navigate: (String) -> Unit) {
-    val days = remember { nextDays(4) }
-    var selectedDay by remember { mutableStateOf<String?>(null) }
-    val selectedEvents = state.events
-        .filter { selectedDay != null && it.eventDate.take(10) == selectedDay }
-        .sortedBy { it.eventDate }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().background(PurpleBackground),
-        contentPadding = PaddingValues(bottom = 8.dp)
-    ) {
-        item {
-            Surface(color = PurpleDeep) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 26.dp)
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.profile),
-                        contentDescription = "Perfil",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(42.dp).clip(CircleShape)
-                    )
-                    Spacer(Modifier.height(34.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        days.forEach { day ->
-                            DayEventCard(
-                                label = day.label,
-                                count = state.events.count { it.eventDate.take(10) == day.key },
-                                selected = selectedDay == day.key,
-                                isToday = day == days.first(),
-                                modifier = Modifier.weight(1f),
-                                onClick = {
-                                    selectedDay = if (selectedDay == day.key) null else day.key
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        if (selectedDay != null) {
-            item {
-                Text(
-                    "Eventos do dia · ${days.first { it.key == selectedDay }.label}",
-                    modifier = Modifier.padding(start = 16.dp, top = 20.dp, end = 16.dp),
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            if (selectedEvents.isEmpty()) {
-                item {
-                    Surface(
-                        modifier = Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp),
-                        color = PurpleSurface,
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        Text("Nenhum evento programado para este dia.", Modifier.fillMaxWidth().padding(16.dp))
-                    }
-                }
-            } else {
-                items(selectedEvents, key = { it.id }) {
-                    Box(Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp)) { EventCard(it) }
-                }
-            }
-        }
-        item {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 24.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                ShortcutCircle("Alunos", Icons.Outlined.Group) { navigate("students") }
-                ShortcutCircle("Treinos", Icons.Outlined.DirectionsRun) { navigate("workouts") }
-                ShortcutCircle("Avisos", Icons.Outlined.Campaign) { navigate("announcements") }
-                ShortcutCircle("Desafios", Icons.Outlined.Flag) { navigate("challenges") }
-            }
-        }
-        item {
-            Text(
-                "Atividade recente",
-                modifier = Modifier.padding(start = 16.dp, top = 28.dp, end = 16.dp),
-                fontSize = 20.sp
-            )
-        }
-        items(state.announcements.take(2), key = { it.id }) {
-            Box(Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp)) { AnnouncementCard(it) }
-        }
-        if (state.isLoading) item { LoadingBox() }
     }
 }
 
@@ -448,13 +384,13 @@ fun ShortcutCircle(label: String, icon: ImageVector, onClick: () -> Unit) {
             modifier = Modifier
                 .size(68.dp)
                 .clip(CircleShape)
-                .background(PurpleSurface)
+                .background(PurpleBackground)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, label, Modifier.size(31.dp), tint = Lime)
+            Icon(icon, label, Modifier.size(31.dp), tint = Color.White)
         }
-        Text(label, Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+        Text(label, Modifier.padding(top = 6.dp), fontWeight = FontWeight.Normal, fontSize = 12.sp, maxLines = 1)
     }
 }
 

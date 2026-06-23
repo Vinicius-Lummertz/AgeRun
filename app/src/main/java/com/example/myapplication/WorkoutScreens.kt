@@ -48,6 +48,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -138,6 +139,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
@@ -543,7 +545,8 @@ fun RoutineBuilderScreen(
             },
             onBack = { if (step > 0) step-- else onBack() },
             readyLabel = if (step == 1) "Resumo" else null,
-            onReady = if (step == 1) ({ step = 2 }) else null
+            onReady = if (step == 1) ({ step = 2 }) else null,
+            readyEnabled = days.any { it.workoutIds.isNotEmpty() }
         )
 
         if (step != 1) Spacer(Modifier.weight(1f))
@@ -742,7 +745,7 @@ fun RoutineSummaryStep(
                 }
             }
         }
-        SaveButton(enabled = name.isNotBlank()) { onSave() }
+        SaveButton(enabled = name.isNotBlank() && includedWorkoutCount > 0) { onSave() }
         if (onDelete != null) {
             TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
                 Text("Excluir treino", color = Color.White.copy(alpha = .62f))
@@ -867,7 +870,7 @@ fun StudentFormScreen(
 fun NewStudentFlowScreen(
     workouts: List<Workout>,
     onBack: () -> Unit,
-    onSave: (Student, Workout?, () -> Unit) -> Unit
+    onSave: (Student, Workout?, onComplete: () -> Unit, onError: () -> Unit) -> Unit
 ) {
     var step by remember { mutableStateOf(0) }
     var name by remember { mutableStateOf("") }
@@ -905,11 +908,13 @@ fun NewStudentFlowScreen(
                 billingDay = billingDay,
                 status = "active"
             ),
-            customWorkout
-        ) {
-            saving = false
-            step = 5
-        }
+            customWorkout,
+            {
+                saving = false
+                step = 5
+            },
+            { saving = false }
+        )
     }
 
     fun goBack() {
@@ -942,7 +947,8 @@ fun NewStudentFlowScreen(
             onBack = ::goBack,
             iconRes = R.drawable.ic_option_alunos,
             readyLabel = if (step == 3) "Valor" else null,
-            onReady = if (step == 3) ({ step = 4 }) else null
+            onReady = if (step == 3) ({ step = 4 }) else null,
+            readyEnabled = sections.any { it.goals.isNotEmpty() }
         )
         if (step != 3) Spacer(Modifier.weight(1f))
         WorkoutBottomPanel(expanded = step == 3) {
@@ -950,7 +956,11 @@ fun NewStudentFlowScreen(
                 0 -> {
                     WorkoutNameStep(name, { name = it }, "Nome do aluno")
                     WorkoutNameStep(phone, { phone = it.filter { char -> char.isDigit() || char in "()+- " } }, "Telefone")
-                    BillingDayPicker(billingDay) { billingDay = it }
+                    Text(
+                        "O proprio aluno escolhe o dia de pagamento no primeiro acesso ou no financeiro do app.",
+                        color = Color.White.copy(alpha = .62f),
+                        fontSize = 12.sp
+                    )
                     WorkoutNextButton(name.isNotBlank() && phone.isNotBlank()) { step = 1 }
                 }
                 1 -> {
@@ -1096,7 +1106,8 @@ fun WorkoutFormScreen(
             },
             onBack = { if (step > 0) step-- else onBack() },
             readyLabel = if (step == 1) "Resumo" else null,
-            onReady = if (step == 1) ({ step = 2 }) else null
+            onReady = if (step == 1) ({ step = 2 }) else null,
+            readyEnabled = sections.any { it.goals.isNotEmpty() }
         )
 
         if (step != 1) {
@@ -1190,17 +1201,19 @@ fun WorkoutFlowHeader(
     onBack: () -> Unit,
     readyLabel: String? = null,
     onReady: (() -> Unit)? = null,
+    readyEnabled: Boolean = true,
     iconRes: Int = R.drawable.ic_option_treinos
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .statusBarsPadding()
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(PurpleBackground)
-                .padding(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 28.dp),
+                .padding(start = 16.dp, top = 10.dp, end = 16.dp, bottom = 28.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
@@ -1216,8 +1229,8 @@ fun WorkoutFlowHeader(
             Spacer(Modifier.weight(1f))
             if (readyLabel != null && onReady != null) {
                 Surface(
-                    modifier = Modifier.clickable(onClick = onReady),
-                    color = Lime,
+                    modifier = Modifier.clickable(enabled = readyEnabled, onClick = onReady),
+                    color = if (readyEnabled) Lime else Lime.copy(alpha = .35f),
                     shape = RoundedCornerShape(50)
                 ) {
                     Text(
@@ -1256,14 +1269,20 @@ fun WorkoutFlowHeader(
 
 @Composable
 fun WorkoutBottomPanel(expanded: Boolean = false, content: @Composable ColumnScope.() -> Unit) {
-    BoxWithConstraints(if (expanded) Modifier.fillMaxSize() else Modifier.fillMaxWidth()) {
+    BoxWithConstraints(
+        (if (expanded) Modifier.fillMaxSize() else Modifier.fillMaxWidth()).padding(14.dp)
+    ) {
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .imePadding()
-                .then(if (expanded) Modifier.fillMaxSize() else Modifier.heightIn(max = maxHeight * .78f)),
+                .then(
+                    if (expanded) Modifier.fillMaxSize()
+                    else Modifier.wrapContentHeight().heightIn(max = if (maxHeight.value.isFinite()) maxHeight * .78f else Dp.Unspecified)
+                ),
             color = PurpleSurface,
-            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+            shape = RoundedCornerShape(24.dp),
+            shadowElevation = 14.dp
         ) {
             Column(
                 modifier = Modifier

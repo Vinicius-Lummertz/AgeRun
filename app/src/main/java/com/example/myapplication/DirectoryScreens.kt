@@ -1,6 +1,7 @@
 ﻿package com.example.myapplication
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -59,6 +60,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
@@ -71,7 +73,6 @@ import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.GifBox
-import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.InsertEmoticon
@@ -131,6 +132,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -178,7 +180,8 @@ fun <T> DirectoryScreen(
     itemStatus: (T) -> String,
     itemMatchesQuery: (T, String) -> Boolean,
     onBack: () -> Unit,
-    onItemClick: (T) -> Unit
+    onItemClick: (T) -> Unit,
+    showBackButton: Boolean = true
 ) {
     var query by remember { mutableStateOf("") }
     var searchMode by remember { mutableStateOf(false) }
@@ -206,41 +209,40 @@ fun <T> DirectoryScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(PurpleBackground)
+            .statusBarsPadding()
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(PurpleBackground)
-                .padding(start = 16.dp, top = 22.dp, end = 16.dp, bottom = 28.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Voltar", tint = Color.White)
-            }
-            Text(
-                title,
-                modifier = Modifier.padding(start = 4.dp),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Normal,
-                color = Color.White
-            )
-        }
+
         AnimatedVisibility(
             visible = !searchMode,
             enter = fadeIn(animationSpec = tween(durationMillis = 180)),
             exit = fadeOut(animationSpec = tween(durationMillis = 140))
         ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(18.dp)
-            ) {
-                actions.forEach { action ->
-                    ShortcutCircleSvg(
-                        label = action.label,
-                        iconRes = action.iconRes,
-                        containerColor = PurpleSurface,
-                        onClick = action.onClick
-                    )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (showBackButton) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+                        }
+                        Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
+                    } else {
+                        Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 16.dp))
+                    }
+                }
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    actions.forEach { action ->
+                        ShortcutCircleSvg(
+                            label = action.label,
+                            iconRes = action.iconRes,
+                            containerColor = PurpleSurface,
+                            onClick = action.onClick
+                        )
+                    }
                 }
             }
         }
@@ -331,6 +333,7 @@ fun StudentsScreen(
     loading: Boolean,
     onBack: () -> Unit,
     onNewStudent: () -> Unit,
+    onRequestInviteCode: ((String?) -> Unit) -> Unit = {},
     onStudentClick: (Student) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -340,6 +343,7 @@ fun StudentsScreen(
     val focusManager = LocalFocusManager.current
     val density = LocalDensity.current
     val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
+    val context = LocalContext.current
     val filtered = students.filter { student ->
         val matchesFilter = when (filter) {
             "Todos" -> true
@@ -394,6 +398,18 @@ fun StudentsScreen(
                 horizontalArrangement = Arrangement.spacedBy(18.dp)
             ) {
                 StudentActionCircle("Novo aluno", "+") { onNewStudent() }
+                StudentActionCircle("Convidar", Icons.Outlined.AttachFile) {
+                    onRequestInviteCode { inviteCode ->
+                        if (inviteCode.isNullOrBlank()) {
+                            Toast.makeText(context, "Nao foi possivel gerar o link de convite", Toast.LENGTH_SHORT).show()
+                            return@onRequestInviteCode
+                        }
+                        val inviteLink = "${BuildConfig.AGEGO_API_URL.trimEnd('/')}/invite/$inviteCode"
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Link de convite", inviteLink))
+                        Toast.makeText(context, "Copiado para a área de transferência", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
         }
 
@@ -493,6 +509,29 @@ fun StudentActionCircle(label: String, symbol: String, onClick: () -> Unit) {
             contentAlignment = Alignment.Center
         ) {
             Text(symbol, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Normal)
+        }
+        Text(
+            label,
+            Modifier.padding(top = 8.dp),
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.sp,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+fun StudentActionCircle(label: String, icon: ImageVector, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            modifier = Modifier
+                .size(68.dp)
+                .clip(CircleShape)
+                .background(PurpleSurface)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = label, tint = Color.White)
         }
         Text(
             label,

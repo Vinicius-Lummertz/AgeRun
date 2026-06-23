@@ -21,6 +21,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.myapplication.data.WorkoutRoutePoint
 import com.example.myapplication.data.WorkoutSplit
+import kotlin.math.max
 
 class WorkoutTrackingService : Service(), LocationListener {
     private val handler = Handler(Looper.getMainLooper())
@@ -61,7 +62,8 @@ class WorkoutTrackingService : Service(), LocationListener {
         when (intent?.action) {
             ACTION_START -> startTracking(reset = true)
             ACTION_RESUME -> startTracking(reset = false)
-            ACTION_PAUSE -> pauseTracking()
+            // Pausar encerra a corrida de vez: nao ha retomada, tempo e distancia sao perdidos.
+            ACTION_PAUSE -> stopTracking()
             ACTION_STOP -> stopTracking()
             ACTION_SET_GOAL -> configureGoal(intent)
             else -> {
@@ -75,23 +77,68 @@ class WorkoutTrackingService : Service(), LocationListener {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // Chamado quando o usuario fecha o app pelos recentes: a corrida e perdida, nao fica pendente para retomar.
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        stopTracking()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         handler.removeCallbacks(ticker)
         runCatching { locationManager.removeUpdates(this) }
-        persist()
+        // Nao persiste estado ao morrer: qualquer corrida em andamento e perdida, sem retomada.
+        prefs().edit().clear().apply()
         super.onDestroy()
     }
 
     override fun onLocationChanged(location: Location) {
         if (!running) return
-        lastLocation?.let { previous ->
-            if (location.accuracy <= 60f) {
-                val delta = previous.distanceTo(location).toDouble()
-                if (delta in 0.5..250.0) distanceMeters += delta
-            }
+        if (!isUsableLocation(location)) return
+
+        val timestamp = location.time.takeIf { it > 0L } ?: System.currentTimeMillis()
+        val candidate = Location(location).apply { time = timestamp }
+        val previous = lastLocation
+        if (previous == null) {
+            acceptLocation(candidate, addDistance = false)
+            return
+        }
+
+        val elapsedSeconds = (timestamp - previous.time) / 1000.0
+        if (elapsedSeconds <= 0.0) return
+        val rawDistance = previous.distanceTo(candidate).toDouble()
+        val uncertainty = (previous.accuracy + candidate.accuracy).coerceAtLeast(4f).toDouble()
+        val minimumMovement = max(MIN_MOVEMENT_METERS, uncertainty * 0.25)
+        if (rawDistance < minimumMovement) return
+
+        val plausibleSpeed = MAX_RUNNING_SPEED_MPS + (uncertainty * 0.35 / elapsedSeconds)
+        if (rawDistance / elapsedSeconds > plausibleSpeed) return
+        if (candidate.hasSpeed() && candidate.speed > MAX_REPORTED_SPEED_MPS) return
+
+        val alpha = when {
+            rawDistance >= 30.0 -> 0.85
+            candidate.accuracy <= 8f -> 0.68
+            candidate.accuracy <= 15f -> 0.52
+            else -> 0.38
+        }
+        val smoothed = Location(candidate).apply {
+            latitude = previous.latitude + (candidate.latitude - previous.latitude) * alpha
+            longitude = previous.longitude + (candidate.longitude - previous.longitude) * alpha
+        }
+        acceptLocation(smoothed, addDistance = true)
+    }
+
+    private fun isUsableLocation(location: Location): Boolean {
+        if (!location.hasAccuracy() || location.accuracy <= 0f || location.accuracy > MAX_ACCURACY_METERS) return false
+        if (location.latitude !in -90.0..90.0 || location.longitude !in -180.0..180.0) return false
+        return location.latitude != 0.0 || location.longitude != 0.0
+    }
+
+    private fun acceptLocation(location: Location, addDistance: Boolean) {
+        if (addDistance) {
+            lastLocation?.distanceTo(location)?.toDouble()?.takeIf { it > 0.0 }?.let { distanceMeters += it }
         }
         lastLocation = location
-        routePoints += WorkoutRoutePoint(location.latitude, location.longitude, location.time.takeIf { it > 0L } ?: System.currentTimeMillis())
+        routePoints += WorkoutRoutePoint(location.latitude, location.longitude, location.time)
         persist()
         broadcast()
         checkGoal()
@@ -112,16 +159,6 @@ class WorkoutTrackingService : Service(), LocationListener {
         persist()
         handler.removeCallbacks(ticker)
         handler.post(ticker)
-    }
-
-    private fun pauseTracking() {
-        if (running) baseElapsedMs = elapsedMs()
-        running = false
-        runCatching { locationManager.removeUpdates(this) }
-        persist()
-        broadcast()
-        // O pausado é sinalizado só dentro do app (botão play/pause); a notificação do sistema
-        // não é atualizada aqui para não soar como um novo alerta.
     }
 
     private fun stopTracking() {
@@ -301,6 +338,10 @@ class WorkoutTrackingService : Service(), LocationListener {
         private const val GOAL_CHANNEL_ID = "agego_workout_goals"
         private const val NOTIFICATION_ID = 7201
         private const val GOAL_NOTIFICATION_ID = 7202
+        private const val MAX_ACCURACY_METERS = 40f
+        private const val MIN_MOVEMENT_METERS = 2.5
+        private const val MAX_RUNNING_SPEED_MPS = 12.0
+        private const val MAX_REPORTED_SPEED_MPS = 15f
     }
 }
 
@@ -346,13 +387,14 @@ fun parseRoutePoints(raw: String): List<WorkoutRoutePoint> =
         }
 
 fun calculateSplits(points: List<WorkoutRoutePoint>): List<WorkoutSplit> {
-    if (points.size < 2) return emptyList()
+    val cleanPoints = cleanRoutePoints(points)
+    if (cleanPoints.size < 2) return emptyList()
     val splits = mutableListOf<WorkoutSplit>()
     var distance = 0.0
     var nextKm = 1
-    var previous = points.first()
+    var previous = cleanPoints.first()
     val start = previous.timestamp
-    points.drop(1).forEach { point ->
+    cleanPoints.drop(1).forEach { point ->
         val results = FloatArray(1)
         Location.distanceBetween(previous.lat, previous.lon, point.lat, point.lon, results)
         distance += results[0].coerceAtLeast(0f).toDouble()
@@ -369,6 +411,32 @@ fun calculateSplits(points: List<WorkoutRoutePoint>): List<WorkoutSplit> {
     }
     return splits
 }
+
+/** Removes invalid coordinates, duplicate readings and physically implausible jumps from saved routes. */
+fun cleanRoutePoints(points: List<WorkoutRoutePoint>): List<WorkoutRoutePoint> {
+    if (points.size < 2) return points.filter { it.hasValidCoordinates() }
+    val clean = mutableListOf<WorkoutRoutePoint>()
+    points.sortedBy { it.timestamp }.forEach { point ->
+        if (!point.hasValidCoordinates()) return@forEach
+        val previous = clean.lastOrNull()
+        if (previous == null) {
+            clean += point
+            return@forEach
+        }
+        val elapsedSeconds = (point.timestamp - previous.timestamp) / 1000.0
+        if (elapsedSeconds <= 0.0) return@forEach
+        val results = FloatArray(1)
+        Location.distanceBetween(previous.lat, previous.lon, point.lat, point.lon, results)
+        val distance = results[0].coerceAtLeast(0f).toDouble()
+        if (distance < 0.75) return@forEach
+        if (distance / elapsedSeconds > 15.0) return@forEach
+        clean += point
+    }
+    return clean
+}
+
+private fun WorkoutRoutePoint.hasValidCoordinates(): Boolean =
+    lat in -90.0..90.0 && lon in -180.0..180.0 && (lat != 0.0 || lon != 0.0) && timestamp > 0L
 
 fun formatElapsed(ms: Long): String {
     val total = (ms / 1000).coerceAtLeast(0)

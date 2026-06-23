@@ -1,0 +1,118 @@
+<%- include('partials/head', { title: 'Treinos & rotinas', active: 'workouts' }) %>
+
+<h1 class="page-title">Treinos &amp; rotinas</h1>
+<p class="page-subtitle"><%= workouts.length %> treino(s) · <%= routines.length %> rotina(s)</p>
+
+<div class="section">
+  <h2>Treinos</h2>
+  <details>
+    <summary class="toggle-link">+ Novo treino</summary>
+    <form class="form-card" method="post" action="/workouts" style="margin-top:14px">
+      <div><label>Nome</label><input name="name" required /></div>
+      <div><label>Estrutura (formato "Dia 1: passo: valor x reps; ...")</label><textarea name="description"></textarea></div>
+      <div style="max-width:200px">
+        <label>Status</label>
+        <select name="status">
+          <option value="active">Ativo</option>
+          <option value="draft">Rascunho</option>
+          <option value="inactive">Inativo</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" type="submit" style="align-self:flex-start">Criar treino</button>
+    </form>
+  </details>
+
+  <% if (workouts.length === 0) { %>
+    <div class="empty-state">Nenhum treino cadastrado ainda.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Nome</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        <% workouts.forEach((w) => { %>
+          <tr>
+            <td><%= w.name %></td>
+            <td><%= w.status %></td>
+            <td>
+              <details>
+                <summary class="toggle-link">Editar</summary>
+                <form class="form-card" method="post" action="/workouts/<%= w.id %>/edit" style="margin-top:10px;min-width:280px">
+                  <div><label>Nome</label><input name="name" value="<%= w.name %>" required /></div>
+                  <div><label>Estrutura</label><textarea name="description"><%= w.description %></textarea></div>
+                  <select name="status">
+                    <option value="active" <%= w.status === 'active' ? 'selected' : '' %>>Ativo</option>
+                    <option value="draft" <%= w.status === 'draft' ? 'selected' : '' %>>Rascunho</option>
+                    <option value="inactive" <%= w.status === 'inactive' ? 'selected' : '' %>>Inativo</option>
+                  </select>
+                  <div class="row-actions">
+                    <button class="btn btn-primary" type="submit">Salvar</button>
+                  </div>
+                </form>
+              </details>
+              <form method="post" action="/workouts/<%= w.id %>/delete" onsubmit="return confirm('Excluir este treino?')" style="margin-top:6px">
+                <button class="btn btn-danger" type="submit">Excluir</button>
+              </form>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<div class="section">
+  <h2>Rotinas</h2>
+  <details>
+    <summary class="toggle-link">+ Nova rotina</summary>
+    <form class="form-card" method="post" action="/routines" style="margin-top:14px">
+      <div><label>Nome</label><input name="name" required /></div>
+      <div><label>Descrição</label><textarea name="description"></textarea></div>
+      <div style="max-width:200px">
+        <label>Status</label>
+        <select name="status">
+          <option value="active">Ativo</option>
+          <option value="draft">Rascunho</option>
+          <option value="inactive">Inativo</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" type="submit" style="align-self:flex-start">Criar rotina</button>
+    </form>
+  </details>
+
+  <% if (routines.length === 0) { %>
+    <div class="empty-state">Nenhuma rotina cadastrada ainda.</div>
+  <% } else { %>
+    <table>
+      <thead><tr><th>Nome</th><th>Status</th><th></th></tr></thead>
+      <tbody>
+        <% routines.forEach((r) => { %>
+          <tr>
+            <td><%= r.name %></td>
+            <td><%= r.status %></td>
+            <td>
+              <details>
+                <summary class="toggle-link">Editar</summary>
+                <form class="form-card" method="post" action="/routines/<%= r.id %>/edit" style="margin-top:10px;min-width:280px">
+                  <div><label>Nome</label><input name="name" value="<%= r.name %>" required /></div>
+                  <div><label>Descrição</label><textarea name="description"><%= r.description %></textarea></div>
+                  <select name="status">
+                    <option value="active" <%= r.status === 'active' ? 'selected' : '' %>>Ativo</option>
+                    <option value="draft" <%= r.status === 'draft' ? 'selected' : '' %>>Rascunho</option>
+                    <option value="inactive" <%= r.status === 'inactive' ? 'selected' : '' %>>Inativo</option>
+                  </select>
+                  <div class="row-actions">
+                    <button class="btn btn-primary" type="submit">Salvar</button>
+                  </div>
+                </form>
+              </details>
+              <form method="post" action="/routines/<%= r.id %>/delete" onsubmit="return confirm('Excluir esta rotina?')" style="margin-top:6px">
+                <button class="btn btn-danger" type="submit">Excluir</button>
+              </form>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</div>
+
+<%- include('partials/footer') %>

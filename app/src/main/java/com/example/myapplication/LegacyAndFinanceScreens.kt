@@ -149,7 +149,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.core.content.ContextCompat
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -216,22 +215,38 @@ fun EarningsScreen(
     val paidStudents = billableStudents.filter { it.paymentStatus == "paid" }
     val pendingStudents = billableStudents.filter { it.paymentStatus != "paid" }
     val proofsToReview = billableStudents.filter { !it.paymentProofUrl.isNullOrBlank() }
+    val overdueStudents = pendingStudents.filter { it.daysOverdue > 4 }
     val targetTotal = billableStudents.sumOf { parseMoneyValue(studentRoutineMonthlyFee(it, routines)) }
     val receivedTotal = paidStudents.sumOf { parseMoneyValue(studentRoutineMonthlyFee(it, routines)) }
     val progress = if (targetTotal > 0) (receivedTotal / targetTotal).toFloat().coerceIn(0f, 1f) else 0f
     var filter by remember { mutableStateOf<String?>(null) }
-    val visibleStudents = when (filter) {
-        "em_dia" -> paidStudents
-        "a_receber" -> pendingStudents
-        else -> billableStudents
-    }
+    var query by remember { mutableStateOf("") }
+    val filterOptions = listOf(
+        "A aprovar (${proofsToReview.size})",
+        "Atrasados (${overdueStudents.size})",
+        "Em dia (${paidStudents.size})",
+        "A receber (${pendingStudents.size})"
+    )
+    val visibleStudents = billableStudents
+        .filter { student ->
+            student.name.contains(query.trim(), ignoreCase = true) && when (filter) {
+                "approve" -> !student.paymentProofUrl.isNullOrBlank()
+                "overdue" -> student.paymentStatus != "paid" && student.daysOverdue > 4
+                "paid" -> student.paymentStatus == "paid"
+                "receivable" -> student.paymentStatus != "paid"
+                else -> true
+            }
+        }
+        .sortedWith(
+            compareByDescending<Student> { !it.paymentProofUrl.isNullOrBlank() }
+                .thenByDescending { it.daysOverdue }
+                .thenBy { it.name.lowercase() }
+        )
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
+    Column(Modifier.fillMaxSize().background(PurpleBackground)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 24.dp, end = 16.dp, bottom = 22.dp)
+        ) {
             Card(colors = CardDefaults.cardColors(containerColor = Lime), shape = RoundedCornerShape(18.dp)) {
                 Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Receita prevista", color = LimeMuted)
@@ -250,67 +265,68 @@ fun EarningsScreen(
                 }
             }
         }
-        if (proofsToReview.isNotEmpty()) {
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Payments, contentDescription = null, tint = Color(0xFFFFD166))
-                    Text(
-                        "Comprovantes para aprovar (${proofsToReview.size})",
-                        Modifier.padding(start = 8.dp),
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFFFD166)
+
+        Surface(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            color = PurpleSurface,
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+        ) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().imePadding(),
+                contentPadding = PaddingValues(start = 16.dp, top = 20.dp, end = 16.dp, bottom = 150.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    StudentSearchBar(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = "Pesquisar aluno"
                     )
                 }
-            }
-            items(proofsToReview, key = { "proof-${it.id}" }) { student ->
-                BillingMovementRow(
-                    student = student,
-                    monthlyFee = studentRoutineMonthlyFee(student, routines),
-                    onReviewClick = { onReviewPayment(student) }
-                )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                FinancialCard(
-                    "Em dia",
-                    paidStudents.size.toString(),
-                    Color(0xFF4CAF50),
-                    Modifier.weight(1f).clickable { filter = if (filter == "em_dia") null else "em_dia" }
-                )
-                FinancialCard(
-                    "A receber",
-                    pendingStudents.size.toString(),
-                    Color(0xFFFFC107),
-                    Modifier.weight(1f).clickable { filter = if (filter == "a_receber") null else "a_receber" }
-                )
-            }
-        }
-        item {
-            Text(
-                "Cobranças" + when (filter) {
-                    "em_dia" -> " · Em dia"
-                    "a_receber" -> " · A receber"
-                    else -> ""
-                },
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        if (visibleStudents.isEmpty()) {
-            item {
-                Surface(color = PurpleSurface, shape = RoundedCornerShape(14.dp)) {
-                    Text("Nenhuma cobrança aqui.", Modifier.fillMaxWidth().padding(18.dp))
+                item {
+                    SegmentedFilterBar(
+                        options = filterOptions,
+                        selected = when (filter) {
+                            "approve" -> filterOptions[0]
+                            "overdue" -> filterOptions[1]
+                            "paid" -> filterOptions[2]
+                            "receivable" -> filterOptions[3]
+                            else -> ""
+                        },
+                        onSelected = { selected ->
+                            val selectedKey = when (selected) {
+                                filterOptions[0] -> "approve"
+                                filterOptions[1] -> "overdue"
+                                filterOptions[2] -> "paid"
+                                else -> "receivable"
+                            }
+                            filter = if (filter == selectedKey) null else selectedKey
+                        }
+                    )
                 }
-            }
-        } else {
-            items(visibleStudents.sortedBy { it.billingDay }, key = { it.id }) { student ->
-                BillingMovementRow(
-                    student = student,
-                    monthlyFee = studentRoutineMonthlyFee(student, routines),
-                    onReviewClick = { onReviewPayment(student) }
-                )
+                item {
+                    Text(
+                        if (query.isBlank()) "Cobranças" else "Resultados para \"${query.trim()}\"",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                if (visibleStudents.isEmpty()) {
+                    item {
+                        Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
+                            Text("Nenhuma cobrança encontrada.", Modifier.fillMaxWidth().padding(18.dp), color = Color.White.copy(alpha = .7f))
+                        }
+                    }
+                } else {
+                    items(visibleStudents, key = { it.id }) { student ->
+                        BillingMovementRow(
+                            student = student,
+                            monthlyFee = studentRoutineMonthlyFee(student, routines),
+                            onReviewClick = { onReviewPayment(student) }
+                        )
+                    }
+                }
             }
         }
     }
@@ -321,9 +337,9 @@ fun BillingMovementRow(student: Student, monthlyFee: String, onReviewClick: () -
     val pending = student.paymentStatus != "paid"
     val hasProof = !student.paymentProofUrl.isNullOrBlank()
     Surface(
-        color = PurpleSurface,
+        color = PurpleBackground,
         shape = RoundedCornerShape(14.dp),
-        modifier = if (hasProof) Modifier.clickable(onClick = onReviewClick) else Modifier
+        modifier = if (pending) Modifier.clickable(onClick = onReviewClick) else Modifier
     ) {
         Column(Modifier.fillMaxWidth().padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -364,6 +380,16 @@ fun BillingMovementRow(student: Student, monthlyFee: String, onReviewClick: () -
                         modifier = Modifier.padding(top = 6.dp)
                     )
                 }
+            } else if (pending) {
+                HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Color.White.copy(alpha = .12f))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Sem comprovante anexado", color = Color.White.copy(alpha = .55f), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    AssistChip(
+                        onClick = onReviewClick,
+                        label = { Text("Confirmar pagamento", fontWeight = FontWeight.Bold) },
+                        colors = AssistChipDefaults.assistChipColors(containerColor = Lime, labelColor = PurpleDeep)
+                    )
+                }
             }
         }
     }
@@ -386,11 +412,12 @@ fun PaymentReviewScreen(
     var showDeclineDialog by remember { mutableStateOf(false) }
     var declineReason by remember { mutableStateOf("") }
 
+    val hasProof = !student.paymentProofUrl.isNullOrBlank()
     LaunchedEffect(student.paymentProofUrl) {
         val url = student.paymentProofUrl
         if (url.isNullOrBlank()) {
             loading = false
-            error = "Nenhum comprovante enviado"
+            error = "Sem comprovante anexado. Se você já recebeu o pagamento (Pix, cartão ou outro meio), confirme manualmente abaixo."
             return@LaunchedEffect
         }
         loading = true
@@ -455,8 +482,8 @@ fun PaymentReviewScreen(
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when {
                     loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Lime) }
-                    error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(error.orEmpty(), color = Color.White.copy(alpha = .7f))
+                    error != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                        Text(error.orEmpty(), color = Color.White.copy(alpha = .7f), textAlign = TextAlign.Center)
                     }
                     isPdf -> LazyColumn(
                         modifier = Modifier.fillMaxSize(),
@@ -476,18 +503,20 @@ fun PaymentReviewScreen(
                 Modifier.fillMaxWidth().padding(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Button(
-                    onClick = { showDeclineDialog = true },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = PurpleSurface, contentColor = Color.White),
-                    shape = RoundedCornerShape(50)
-                ) { Text("Recusar", fontWeight = FontWeight.Bold) }
+                if (hasProof) {
+                    Button(
+                        onClick = { showDeclineDialog = true },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = PurpleSurface, contentColor = Color.White),
+                        shape = RoundedCornerShape(50)
+                    ) { Text("Recusar", fontWeight = FontWeight.Bold) }
+                }
                 Button(
                     onClick = onApprove,
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = PurpleDeep),
                     shape = RoundedCornerShape(50)
-                ) { Text("Aprovar", fontWeight = FontWeight.Bold) }
+                ) { Text(if (hasProof) "Aprovar" else "Confirmar pagamento", fontWeight = FontWeight.Bold) }
             }
         }
     }
@@ -574,7 +603,8 @@ fun EventsScreen(
                 event.location.orEmpty().contains(query, true)
         },
         onBack = onBack,
-        onItemClick = onEventClick
+        onItemClick = onEventClick,
+        showBackButton = false
     )
 }
 

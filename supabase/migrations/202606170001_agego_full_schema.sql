@@ -948,7 +948,7 @@ GRANT EXECUTE ON FUNCTION public.set_group_members(UUID, UUID[]) TO authenticate
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES
-  ('agego-social-posts', 'agego-social-posts', FALSE, 52428800, ARRAY['image/png','image/jpeg','image/webp','image/gif','video/mp4']),
+  ('agego-social-posts', 'agego-social-posts', FALSE, 52428800, ARRAY['image/png','image/jpeg','image/webp','image/gif','application/pdf','video/mp4']),
   ('agego-management', 'agego-management', FALSE, 52428800, ARRAY['image/png','image/jpeg','image/webp','application/pdf','text/plain','video/mp4'])
 ON CONFLICT (id) DO UPDATE SET
   public = EXCLUDED.public,

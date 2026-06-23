@@ -17,6 +17,9 @@ import com.example.myapplication.ui.theme.PurpleDeep
 
 class MainActivity : ComponentActivity() {
     private val deepLinkEventId = mutableStateOf<String?>(null)
+    private val deepLinkWebPairToken = mutableStateOf<String?>(null)
+    private val deepLinkStudentAccess = mutableStateOf<Pair<String, String>?>(null)
+    private val deepLinkInviteCode = mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,16 +32,47 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(PurpleDeep.toArgb())
         )
         deepLinkEventId.value = intent.eventDeepLinkId()
-        setContent { AgeGoTheme { AgeGoApp(initialEventId = deepLinkEventId.value) } }
+        deepLinkWebPairToken.value = intent.webPairDeepLinkToken()
+        deepLinkStudentAccess.value = intent.studentAccessDeepLink()
+        deepLinkInviteCode.value = intent.inviteDeepLinkCode()
+        setContent {
+            AgeGoTheme {
+                AgeGoApp(
+                    initialEventId = deepLinkEventId.value,
+                    initialWebPairToken = deepLinkWebPairToken.value,
+                    onWebPairTokenConsumed = { deepLinkWebPairToken.value = null },
+                    initialStudentAccessPhone = deepLinkStudentAccess.value?.first,
+                    initialStudentAccessCode = deepLinkStudentAccess.value?.second,
+                    initialInviteCode = deepLinkInviteCode.value
+                )
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         deepLinkEventId.value = intent.eventDeepLinkId()
+        deepLinkWebPairToken.value = intent.webPairDeepLinkToken()
+        deepLinkStudentAccess.value = intent.studentAccessDeepLink()
+        deepLinkInviteCode.value = intent.inviteDeepLinkCode()
     }
 
     private fun Intent?.eventDeepLinkId(): String? = this?.data
         ?.takeIf { it.scheme == "agego" && it.host == "event" }
+        ?.pathSegments?.firstOrNull()
+
+    private fun Intent?.webPairDeepLinkToken(): String? = this?.data
+        ?.takeIf { it.scheme == "agego" && it.host == "web-pair" }
+        ?.pathSegments?.firstOrNull()
+
+    private fun Intent?.studentAccessDeepLink(): Pair<String, String>? = this?.data
+        ?.takeIf { it.scheme == "agego" && it.host == "student-access" }
+        ?.pathSegments
+        ?.takeIf { it.size >= 2 }
+        ?.let { it[0] to it[1] }
+
+    private fun Intent?.inviteDeepLinkCode(): String? = this?.data
+        ?.takeIf { it.scheme == "agego" && it.host == "invite" }
         ?.pathSegments?.firstOrNull()
 }

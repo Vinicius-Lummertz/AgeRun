@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Entrar · AgeGo</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="login-screen">
+    <div class="login-card">
+      <h1>Painel do treinador</h1>
+      <p>Abra o app AgeGo no seu celular e aponte a câmera para o QR Code para entrar.</p>
+      <div class="qr-box"><img id="qr-image" src="" alt="QR Code de login" /></div>
+      <div class="qr-status" id="qr-status">Gerando QR Code...</div>
+    </div>
+  </div>
+  <script>
+    let token = null;
+    let pollTimer = null;
+
+    async function startPairing() {
+      clearInterval(pollTimer);
+      const res = await fetch('/api/pairing/start', { method: 'POST' });
+      const data = await res.json();
+      token = data.token;
+      document.getElementById('qr-image').src = data.qrDataUrl;
+      document.getElementById('qr-status').textContent = 'Aguardando leitura do QR Code...';
+      pollTimer = setInterval(checkStatus, 2000);
+      setTimeout(() => {
+        if (token) {
+          document.getElementById('qr-status').textContent = 'QR Code expirado. Gerando um novo...';
+          startPairing();
+        }
+      }, data.expiresInMs);
+    }
+
+    async function checkStatus() {
+      if (!token) return;
+      const res = await fetch(`/api/pairing/${token}/status`);
+      const data = await res.json();
+      if (data.expired) {
+        token = null;
+        startPairing();
+        return;
+      }
+      if (data.ready) {
+        clearInterval(pollTimer);
+        document.getElementById('qr-status').textContent = 'Conectado! Entrando...';
+        window.location.href = '/';
+      }
+    }
+
+    startPairing();
+  </script>
+</body>
+</html>

@@ -53,7 +53,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -151,7 +150,6 @@ import com.example.myapplication.ui.AgeGoUiState
 import com.example.myapplication.ui.AgeGoViewModel
 import com.example.myapplication.ui.theme.AgeGoTheme
 import com.example.myapplication.ui.theme.Lime
-import com.example.myapplication.ui.theme.LimeMuted
 import com.example.myapplication.ui.theme.NavigationPurple
 import com.example.myapplication.ui.theme.PurpleBackground
 import com.example.myapplication.ui.theme.PurpleDeep
@@ -159,25 +157,6 @@ import com.example.myapplication.ui.theme.PurpleSurface
 import androidx.compose.ui.text.style.TextAlign
 import kotlin.math.roundToInt
 
-
-@Composable
-fun PlaceholderScreen(title: String, message: String, onBack: () -> Unit) {
-    ListScaffold(title, "Novo", onBack) {
-        Surface(color = PurpleBackground, shape = RoundedCornerShape(14.dp)) {
-            Text(message, Modifier.fillMaxWidth().padding(18.dp))
-        }
-    }
-}
-
-@Composable
-fun FinancialCard(label: String, value: String, color: Color, modifier: Modifier) {
-    Card(modifier, colors = CardDefaults.cardColors(containerColor = PurpleSurface)) {
-        Column(Modifier.padding(16.dp)) {
-            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, color = color, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        }
-    }
-}
 
 @Composable
 fun AnnouncementsScreen(announcements: List<Announcement>, loading: Boolean, onBack: () -> Unit, onCreate: () -> Unit = {}) {
@@ -463,8 +442,6 @@ fun AnnouncementCard(announcement: Announcement) {
                 Text(announcement.publishedAt.orEmpty(), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(announcement.content, Modifier.padding(top = 14.dp), lineHeight = 21.sp)
-            HorizontalDivider(Modifier.padding(vertical = 12.dp), color = Color.White.copy(alpha = .12f))
-            Text("👍  8     🏃  3", fontSize = 14.sp)
         }
     }
 }
@@ -503,35 +480,6 @@ fun ListScaffold(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item { Column(verticalArrangement = Arrangement.spacedBy(12.dp), content = content) }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DetailScreen(title: String, name: String, description: String, onBack: () -> Unit) {
-    Scaffold(
-        containerColor = PurpleBackground,
-        topBar = {
-            TopAppBar(
-                title = { Text(title) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Voltar") } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = PurpleBackground)
-            )
-        }
-    ) { padding ->
-        Column(Modifier.padding(padding).padding(20.dp)) {
-            Box(Modifier.size(84.dp).clip(CircleShape).background(LimeMuted), contentAlignment = Alignment.Center) {
-                Text(name.take(1), color = Lime, fontWeight = FontWeight.Bold, fontSize = 34.sp)
-            }
-            Text(name, Modifier.padding(top = 18.dp), fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text(description, Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Card(Modifier.fillMaxWidth().padding(top = 24.dp), colors = CardDefaults.cardColors(containerColor = PurpleSurface)) {
-                Column(Modifier.padding(18.dp)) {
-                    Text("Resumo", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    Text("A estrutura desta página já está pronta para receber os detalhes do banco.", Modifier.padding(top = 8.dp))
-                }
-            }
         }
     }
 }

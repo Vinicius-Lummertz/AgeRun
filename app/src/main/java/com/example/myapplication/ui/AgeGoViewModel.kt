@@ -6,6 +6,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.myapplication.data.AgeGoRepository
 import com.example.myapplication.data.Announcement
+import com.example.myapplication.data.AsaasCardInput
+import com.example.myapplication.data.AsaasPixResult
+import com.example.myapplication.data.AsaasSubscriptionResult
 import com.example.myapplication.data.AuthRequiredException
 import com.example.myapplication.data.AuthSession
 import com.example.myapplication.data.Challenge
@@ -136,19 +139,103 @@ class AgeGoViewModel(
         nickname: String,
         photoUri: Uri?,
         frequencyDays: List<Int>,
+        billingDay: Int,
         token: String,
         context: Context,
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
             _uiState.update { it.copy(authLoading = true, authMessage = null) }
-            runCatching { repository.completeStudentFirstAccess(context.contentResolver, phone, email, nickname, photoUri, frequencyDays, token) }
+            runCatching { repository.completeStudentFirstAccess(context.contentResolver, phone, email, nickname, photoUri, frequencyDays, billingDay, token) }
                 .onSuccess { session ->
                     _uiState.value = emptyDataState(session).copy(isLoading = true, authLoading = false, authMessage = null)
                     refresh()
                     onSuccess()
                 }
                 .onFailure { error -> _uiState.update { it.copy(authLoading = false, authMessage = error.message ?: "Primeiro acesso nao concluido") } }
+        }
+    }
+
+    fun payMonthlyFeeWithPix(cpf: String, onResult: (AsaasPixResult?) -> Unit) {
+        viewModelScope.launch {
+            runCatching { repository.payMonthlyFeeWithPix(cpf) }
+                .onSuccess { onResult(it) }
+                .onFailure { error ->
+                    _uiState.update { it.copy(message = error.message ?: "Nao foi possivel gerar o Pix") }
+                    onResult(null)
+                }
+        }
+    }
+
+    fun subscribeMonthlyFeeWithCard(cpf: String, postalCode: String, addressNumber: String, card: AsaasCardInput, onResult: (AsaasSubscriptionResult?) -> Unit) {
+        viewModelScope.launch {
+            runCatching { repository.subscribeMonthlyFeeWithCard(cpf, postalCode, addressNumber, card) }
+                .onSuccess { result ->
+                    onResult(result)
+                    refresh()
+                }
+                .onFailure { error ->
+                    _uiState.update { it.copy(message = error.message ?: "Nao foi possivel assinar com o cartao") }
+                    onResult(null)
+                }
+        }
+    }
+
+    fun cancelCardSubscription() {
+        viewModelScope.launch {
+            runCatching { repository.cancelCardSubscription() }
+                .onSuccess {
+                    _uiState.update { it.copy(message = "Assinatura cancelada") }
+                    refresh()
+                }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Nao foi possivel cancelar a assinatura") } }
+        }
+    }
+
+    fun getInviteLink(onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            runCatching { repository.getInviteLink() }
+                .onSuccess { onResult(it) }
+                .onFailure { onResult(null) }
+        }
+    }
+
+    fun registerStudentViaInvite(
+        inviteCode: String,
+        phone: String,
+        email: String,
+        nickname: String,
+        photoUri: Uri?,
+        frequencyDays: List<Int>,
+        billingDay: Int,
+        context: Context,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(authLoading = true, authMessage = null) }
+            runCatching { repository.registerStudentViaInvite(context.contentResolver, inviteCode, phone, email, nickname, photoUri, frequencyDays, billingDay) }
+                .onSuccess { session ->
+                    _uiState.value = emptyDataState(session).copy(isLoading = true, authLoading = false, authMessage = null)
+                    refresh()
+                    onSuccess()
+                }
+                .onFailure { error -> _uiState.update { it.copy(authLoading = false, authMessage = error.message ?: "Nao foi possivel concluir o cadastro") } }
+        }
+    }
+
+    fun updateBillingDay(billingDay: Int) {
+        viewModelScope.launch {
+            runCatching { repository.updateBillingDay(billingDay) }
+                .onSuccess { refresh() }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar o dia de pagamento") } }
+        }
+    }
+
+    fun confirmWebPairing(token: String) {
+        viewModelScope.launch {
+            runCatching { repository.confirmWebPairing(token) }
+                .onSuccess { _uiState.update { it.copy(message = "Site conectado com sucesso") } }
+                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Nao foi possivel conectar o site. Gere um novo QR Code.") } }
         }
     }
 
@@ -236,7 +323,7 @@ class AgeGoViewModel(
         }
     }
 
-    fun saveStudent(student: Student, onSaved: (Student) -> Unit = {}) {
+    fun saveStudent(student: Student, onSaved: (Student) -> Unit = {}, onError: () -> Unit = {}) {
         viewModelScope.launch {
             runCatching { repository.saveStudent(student) }
                 .onSuccess { saved ->
@@ -256,6 +343,7 @@ class AgeGoViewModel(
                 }
                 .onFailure { error ->
                     _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar aluno") }
+                    onError()
                 }
         }
     }
@@ -268,7 +356,7 @@ class AgeGoViewModel(
         }
     }
 
-    fun saveWorkout(workout: Workout, onSaved: (Workout) -> Unit = {}) {
+    fun saveWorkout(workout: Workout, onSaved: (Workout) -> Unit = {}, onError: () -> Unit = {}) {
         viewModelScope.launch {
             runCatching { repository.saveWorkout(workout) }
                 .onSuccess { normalized ->
@@ -278,7 +366,10 @@ class AgeGoViewModel(
                     }
                     onSaved(normalized)
                 }
-                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar treino") } }
+                .onFailure { error ->
+                    _uiState.update { it.copy(message = error.message ?: "Nao foi possivel salvar treino") }
+                    onError()
+                }
         }
     }
 
@@ -388,11 +479,14 @@ class AgeGoViewModel(
         }
     }
 
-    fun submitPaymentProof(url: String) {
-        viewModelScope.launch {
-            runCatching { repository.submitPaymentProof(url) }
-                .onSuccess { _uiState.update { it.copy(message = "Comprovante enviado para aprovação") }; refresh() }
-                .onFailure { error -> _uiState.update { it.copy(message = error.message ?: "Não foi possível enviar o comprovante") } }
+    suspend fun submitPaymentProof(url: String) {
+        try {
+            repository.submitPaymentProof(url)
+            _uiState.update { it.copy(message = "Comprovante enviado para aprovação") }
+            refresh()
+        } catch (error: Throwable) {
+            _uiState.update { it.copy(message = error.message ?: "Não foi possível enviar o comprovante") }
+            throw error
         }
     }
 

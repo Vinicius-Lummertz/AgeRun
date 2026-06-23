@@ -63,7 +63,7 @@ import com.example.myapplication.ui.theme.PurpleSurface
 import coil.compose.AsyncImage
 import androidx.compose.foundation.shape.CircleShape
 
-private enum class AuthFlow { Entry, StudentOnboarding, TrainerOnboarding }
+private enum class AuthFlow { Entry, StudentOnboarding, TrainerOnboarding, InviteOnboarding }
 
 @Composable
 fun RealAuthScreen(
@@ -75,10 +75,22 @@ fun RealAuthScreen(
     onRegisterInstructor: (String, String, String, (String) -> Unit) -> Unit,
     onVerifyInstructor: (String, String, String, Uri?, () -> Unit, () -> Unit) -> Unit,
     onStartStudent: (String, (String) -> Unit) -> Unit,
-    onCompleteStudent: (String, String, String, Uri?, List<Int>, String) -> Unit
+    onCompleteStudent: (String, String, String, Uri?, List<Int>, Int, String) -> Unit,
+    onCompleteInviteStudent: (String, String, String, String, Uri?, List<Int>, Int) -> Unit = { _, _, _, _, _, _, _ -> },
+    initialStudentPhone: String? = null,
+    initialStudentAccessToken: String? = null,
+    initialInviteCode: String? = null
 ) {
-    var flow by remember { mutableStateOf(AuthFlow.Entry) }
-    var studentPhone by remember { mutableStateOf("") }
+    var flow by remember(initialStudentPhone, initialInviteCode) {
+        mutableStateOf(
+            when {
+                !initialStudentPhone.isNullOrBlank() -> AuthFlow.StudentOnboarding
+                !initialInviteCode.isNullOrBlank() -> AuthFlow.InviteOnboarding
+                else -> AuthFlow.Entry
+            }
+        )
+    }
+    var studentPhone by remember(initialStudentPhone) { mutableStateOf(initialStudentPhone.orEmpty()) }
 
     Box(
         modifier = Modifier
@@ -91,7 +103,6 @@ fun RealAuthScreen(
             Spacer(Modifier.height(34.dp))
             Image(painterResource(R.drawable.logo_sem_fundo), "AgeGo", Modifier.size(94.dp))
             Text("AgeGo", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-            Text("Acesso por token, sem senha", color = Color.White.copy(alpha = .62f), fontSize = 13.sp)
             Spacer(Modifier.height(28.dp))
             Surface(
                 modifier = Modifier.fillMaxWidth().weight(1f),
@@ -120,7 +131,14 @@ fun RealAuthScreen(
                             phone = studentPhone,
                             loading = loading,
                             onBack = { flow = AuthFlow.Entry },
-                            onCompleteStudent = onCompleteStudent
+                            onCompleteStudent = onCompleteStudent,
+                            initialToken = initialStudentAccessToken.orEmpty()
+                        )
+                        AuthFlow.InviteOnboarding -> InviteStudentOnboardingPane(
+                            inviteCode = initialInviteCode.orEmpty(),
+                            loading = loading,
+                            onBack = { flow = AuthFlow.Entry },
+                            onCompleteInviteStudent = onCompleteInviteStudent
                         )
                         AuthFlow.TrainerOnboarding -> TrainerOnboardingPane(
                             loading = loading,
@@ -187,15 +205,17 @@ private fun StudentOnboardingPane(
     phone: String,
     loading: Boolean,
     onBack: () -> Unit,
-    onCompleteStudent: (String, String, String, Uri?, List<Int>, String) -> Unit
+    onCompleteStudent: (String, String, String, Uri?, List<Int>, Int, String) -> Unit,
+    initialToken: String = ""
 ) {
     var step by remember { mutableIntStateOf(0) }
     var email by remember { mutableStateOf("") }
     var nickname by remember { mutableStateOf("") }
     var photoUri by remember { mutableStateOf<Uri?>(null) }
     var selectedDays by remember { mutableStateOf(setOf<Int>()) }
-    var token by remember { mutableStateOf("") }
-    val titles = listOf("Qual é o seu e-mail?", "Monte seu perfil", "Escolha seus dias", "PIN do professor")
+    var billingDay by remember { mutableIntStateOf(5) }
+    var token by remember { mutableStateOf(initialToken) }
+    val titles = listOf("Qual é o seu e-mail?", "Monte seu perfil", "Escolha seus dias", "Dia de pagamento", "PIN do professor")
 
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -206,7 +226,7 @@ private fun StudentOnboardingPane(
                 Text("Você é uma aluna nova", color = Lime, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                 Text(titles[step], color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
             }
-            Text("${step + 1}/4", color = Lime, fontWeight = FontWeight.Bold)
+            Text("${step + 1}/5", color = Lime, fontWeight = FontWeight.Bold)
         }
         Text(
             if (step == 0) "Reconhecemos o número $phone. Complete seu cadastro para acessar o treino preparado pelo seu professor."
@@ -234,10 +254,83 @@ private fun StudentOnboardingPane(
                 AuthButton("Continuar", loading, selectedDays.isNotEmpty()) { step = 3 }
             }
             3 -> {
+                Text("Escolha o dia do mes em que prefere pagar a mensalidade.", color = Color.White.copy(alpha = .78f), fontSize = 13.sp)
+                BillingDayPicker(billingDay) { billingDay = it }
+                Text("Voce podera mudar essa data depois, no financeiro do app.", color = Color.White.copy(alpha = .52f), fontSize = 12.sp)
+                AuthButton("Continuar", loading, true) { step = 4 }
+            }
+            4 -> {
                 Text("Digite o PIN de 6 dígitos exibido no cadastro feito pelo seu professor. O PIN vale por 24 horas.", color = Color.White.copy(alpha = .72f), fontSize = 13.sp)
                 AuthField(token, { token = it.filter(Char::isDigit).take(6) }, "PIN de 6 dígitos", KeyboardType.Number, Icons.Outlined.Phone)
                 AuthButton("Concluir e entrar", loading, token.length == 6) {
-                    onCompleteStudent(phone, email.trim(), nickname.trim(), photoUri, selectedDays.sorted(), token)
+                    onCompleteStudent(phone, email.trim(), nickname.trim(), photoUri, selectedDays.sorted(), billingDay, token)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InviteStudentOnboardingPane(
+    inviteCode: String,
+    loading: Boolean,
+    onBack: () -> Unit,
+    onCompleteInviteStudent: (String, String, String, String, Uri?, List<Int>, Int) -> Unit
+) {
+    var step by remember { mutableIntStateOf(0) }
+    var phone by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    var nickname by remember { mutableStateOf("") }
+    var photoUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedDays by remember { mutableStateOf(setOf<Int>()) }
+    var billingDay by remember { mutableIntStateOf(5) }
+    val titles = listOf("Seu telefone", "Qual é o seu e-mail?", "Monte seu perfil", "Escolha seus dias", "Dia de pagamento")
+
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { if (step == 0) onBack() else step -= 1 }) {
+                Icon(Icons.Outlined.ArrowBack, "Voltar", tint = Color.White)
+            }
+            Column(Modifier.weight(1f)) {
+                Text("Você foi convidada pelo professor", color = Lime, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Text(titles[step], color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            }
+            Text("${step + 1}/5", color = Lime, fontWeight = FontWeight.Bold)
+        }
+        Text(
+            "Complete seu cadastro para acessar o treino preparado pelo seu professor.",
+            color = Color.White.copy(alpha = .62f),
+            fontSize = 12.sp
+        )
+
+        when (step) {
+            0 -> {
+                AuthField(phone, { phone = it.filter(Char::isDigit).take(15) }, "Telefone", KeyboardType.Phone, Icons.Outlined.Phone)
+                AuthButton("Continuar", loading, phone.length >= 8) { step = 1 }
+            }
+            1 -> {
+                AuthField(email, { email = it }, "E-mail", KeyboardType.Email, Icons.Outlined.AlternateEmail)
+                AuthButton("Continuar", loading, email.contains("@") && email.substringAfter("@").contains(".")) { step = 2 }
+            }
+            2 -> {
+                AuthField(nickname, { nickname = it }, "Nome ou apelido", KeyboardType.Text, Icons.Outlined.AccountCircle)
+                PhotoPickerRow(photoUri = photoUri, onPhotoSelected = { photoUri = it })
+                AuthButton("Continuar", loading, nickname.trim().length > 1) { step = 3 }
+            }
+            3 -> {
+                Text("Em quais dias você pretende seguir seu treino?", color = Color.White.copy(alpha = .78f), fontSize = 13.sp)
+                WeekDaySelector(selectedDays) { day ->
+                    selectedDays = if (day in selectedDays) selectedDays - day else selectedDays + day
+                }
+                Text("Você poderá ajustar essa preferência depois.", color = Color.White.copy(alpha = .52f), fontSize = 12.sp)
+                AuthButton("Continuar", loading, selectedDays.isNotEmpty()) { step = 4 }
+            }
+            4 -> {
+                Text("Escolha o dia do mes em que prefere pagar a mensalidade.", color = Color.White.copy(alpha = .78f), fontSize = 13.sp)
+                BillingDayPicker(billingDay) { billingDay = it }
+                Text("Voce podera mudar essa data depois, no financeiro do app.", color = Color.White.copy(alpha = .52f), fontSize = 12.sp)
+                AuthButton("Concluir e entrar", loading, true) {
+                    onCompleteInviteStudent(inviteCode, phone.trim(), email.trim(), nickname.trim(), photoUri, selectedDays.sorted(), billingDay)
                 }
             }
         }
@@ -388,11 +481,17 @@ private fun AuthField(
     onValueChange: (String) -> Unit,
     label: String,
     keyboardType: KeyboardType,
-    icon: androidx.compose.ui.graphics.vector.ImageVector
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    maxLength: Int = when (keyboardType) {
+        KeyboardType.Email -> 254
+        KeyboardType.Phone -> 20
+        KeyboardType.Number -> 6
+        else -> 80
+    }
 ) {
     OutlinedTextField(
         value = value,
-        onValueChange = onValueChange,
+        onValueChange = { onValueChange(it.take(maxLength)) },
         modifier = Modifier.fillMaxWidth(),
         label = { Text(label) },
         singleLine = true,

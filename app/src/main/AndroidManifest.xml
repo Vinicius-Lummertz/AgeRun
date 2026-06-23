@@ -32,6 +32,9 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="agego" android:host="event" />
+                <data android:scheme="agego" android:host="web-pair" />
+                <data android:scheme="agego" android:host="student-access" />
+                <data android:scheme="agego" android:host="invite" />
             </intent-filter>
         </activity>
         <service
