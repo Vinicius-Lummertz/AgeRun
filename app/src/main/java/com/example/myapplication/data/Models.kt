@@ -85,6 +85,13 @@ enum class SyncStatus {
 }
 
 @Serializable
+enum class CommunityPostType {
+    @SerialName("post") POST,
+    @SerialName("poll") POLL,
+    @SerialName("challenge") CHALLENGE
+}
+
+@Serializable
 data class TrainingNowUser(
     val id: String,
     val name: String,
